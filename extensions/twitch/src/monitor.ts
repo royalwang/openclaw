@@ -5,8 +5,8 @@
  * resolves agent routes, and handles replies.
  */
 
-import type { ReplyPayload, OpenClawConfig } from "../api.js";
-import { createReplyPrefixOptions } from "../api.js";
+import type { ReplyPayload, OpenClawConfig } from "../runtime-api.js";
+import { createReplyPrefixOptions } from "../runtime-api.js";
 import { checkTwitchAccessControl } from "./access-control.js";
 import { getOrCreateClientManager } from "./client-manager-registry.js";
 import { getTwitchRuntime } from "./runtime.js";

@@ -6,8 +6,8 @@
  */
 
 import { buildPassiveProbedChannelStatusSummary } from "../../shared/channel-status-summary.js";
-import type { OpenClawConfig } from "../api.js";
-import { buildChannelConfigSchema } from "../api.js";
+import type { OpenClawConfig } from "../runtime-api.js";
+import { buildChannelConfigSchema } from "../runtime-api.js";
 import { twitchMessageActions } from "./actions.js";
 import { removeClientManager } from "./client-manager-registry.js";
 import { TwitchConfigSchema } from "./config-schema.js";
