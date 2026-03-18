@@ -20,6 +20,7 @@ OpenClaw 的架构可以分为以下几个主要层级：
 
 为了更深入地了解各个子系统，请参阅以下详细文档：
 
+- [**启动引导与运行时核心 (Bootstrap & Runtime)**](./modules/bootstrap-runtime.md): 深度解密系统物理入口、跨平台进程衍化 (Respawn) 与运行时 IO 解耦层。
 - [**网关与守护进程 (Gateway & Daemon)**](./modules/gateway-daemon.md): 深入分析网关服务器、RPC 通信、服务引导及跨平台后台管理。
 - [**CLI 与命令系统 (CLI & Commands)**](./modules/cli-commands.md): 详述基于 Commander.js 的延迟加载命令体系、参数解析及自描述元数据。
 - [**代理、上下文与记忆 (Agents, Context & Memory)**](./modules/agents-logic.md): 探索 Agent 的认知循环、动态上下文注入、混合搜索记忆引擎及会话管理。
