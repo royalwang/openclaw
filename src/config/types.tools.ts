@@ -444,6 +444,30 @@ export type MemorySearchConfig = {
   };
 };
 
+export type WebSearchProviderConfig = {
+  apiKey?: SecretInput;
+};
+
+export type WebSearchConfig = {
+  /** Enable web search tool (default: true when API key is present). */
+  enabled?: boolean;
+  /** Search provider id. */
+  provider?: string;
+  /** Default search results count (1-10). */
+  maxResults?: number;
+  /** Timeout in seconds for search requests. */
+  timeoutSeconds?: number;
+  /** Cache TTL in minutes for search results. */
+  cacheTtlMinutes?: number;
+  /** Top-level API key (used when no provider sub-config key is set). */
+  apiKey?: SecretInput;
+  brave?: WebSearchProviderConfig & { mode?: string };
+  gemini?: WebSearchProviderConfig;
+  grok?: WebSearchProviderConfig;
+  kimi?: WebSearchProviderConfig;
+  perplexity?: WebSearchProviderConfig;
+};
+
 export type ToolsConfig = {
   /** Base tool profile applied before allow/deny lists. */
   profile?: ToolProfileId;
@@ -454,20 +478,7 @@ export type ToolsConfig = {
   /** Optional tool policy overrides keyed by provider id or "provider/model". */
   byProvider?: Record<string, ToolPolicyConfig>;
   web?: {
-    search?: {
-      /** Enable web search tool (default: true when API key is present). */
-      enabled?: boolean;
-      /** Search provider id. */
-      provider?: string;
-      /** Default search results count (1-10). */
-      maxResults?: number;
-      /** Timeout in seconds for search requests. */
-      timeoutSeconds?: number;
-      /** Cache TTL in minutes for search results. */
-      cacheTtlMinutes?: number;
-      /** Provider-specific config written at runtime by plugin setCredentialValue. */
-      [key: string]: unknown;
-    };
+    search?: WebSearchConfig;
     fetch?: {
       /** Enable web fetch tool (default: true). */
       enabled?: boolean;

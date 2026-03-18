@@ -88,9 +88,6 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
 function linkPluginNodeModules(params) {
   const runtimeNodeModulesDir = path.join(params.runtimePluginDir, "node_modules");
   removePathIfExists(runtimeNodeModulesDir);
-  if (params.distPluginDir) {
-    removePathIfExists(path.join(params.distPluginDir, "node_modules"));
-  }
   if (!fs.existsSync(params.sourcePluginNodeModulesDir)) {
     return;
   }
