@@ -23,8 +23,11 @@ OpenClaw 的架构可以分为以下几个主要层级：
 - [**网关与守护进程 (Gateway & Daemon)**](./modules/gateway-daemon.md): 深入分析网关服务器、RPC 通信、服务引导及跨平台后台管理。
 - [**CLI 与命令系统 (CLI & Commands)**](./modules/cli-commands.md): 详述基于 Commander.js 的延迟加载命令体系、参数解析及自描述元数据。
 - [**代理、上下文与记忆 (Agents, Context & Memory)**](./modules/agents-logic.md): 探索 Agent 的认知循环、动态上下文注入、混合搜索记忆引擎及会话管理。
+- [**自动回复与分发 (Auto-Reply & Dispatch)**](./modules/auto-reply.md): 剖析状态机流转、指令控制、触发器匹配及大模型生成后的心跳回复分发。
+- [**定时任务与调度 (Cron & Background)**](./modules/cron.md): 聚焦异步防并发队列、独立代理投递及持久化任务恢复与会话清理机制。
 - [**多媒体与高级特性 (Media & Features)**](./modules/media-features.md): 涵盖高性能图像处理、音频转码、PDF 解析、多模型图像生成以及强大的浏览器自动化能力。
 - [**渠道、通讯与路由 (Channels & Routing)**](./modules/channels-routing.md): 解析多平台消息对接、多级路由分发算法及会话键生成机制。
+- [**会话与凭据 (Sessions & Secrets)**](./modules/sessions-secrets.md): 覆盖多租户会话ID消解、系统级模型参数重写及凭证安全与防刷屏策略。
 - [**基础设施与核心架构 (Infra & Core)**](./modules/infra-core.md): 包含执行安全边界、后台心跳同步、局域网服务发现以及严谨的 Zod 配置验证系统。
 - [**插件系统与扩展性 (Extensibility)**](./modules/extensibility.md): 揭秘插件加载引擎、全生命周期 Hook 系统及插件开发 SDK。
 - [**高级能力与交互 (Capabilities & UI)**](./modules/capabilities.md): 包含 ACP 协议层、TUI 终端界面、Canvas 富文本渲染以及多模态感知（语音/视觉/视频）流水线。
