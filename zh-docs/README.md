@@ -29,6 +29,8 @@ OpenClaw 的架构可以分为以下几个主要层级：
 - [**渠道、通讯与路由 (Channels & Routing)**](./modules/channels-routing.md): 解析多平台消息对接、多级路由分发算法及会话键生成机制。
 - [**会话与凭据 (Sessions & Secrets)**](./modules/sessions-secrets.md): 覆盖多租户会话ID消解、系统级模型参数重写及凭证安全与防刷屏策略。
 - [**基础设施与核心架构 (Infra & Core)**](./modules/infra-core.md): 包含执行安全边界、后台心跳同步、局域网服务发现以及严谨的 Zod 配置验证系统。
+- [**进程与基础工具 (Process & Utilities)**](./modules/process-utils.md): 解析底层子进程控制、看门狗恢复策略以及共享限流防刷等基础工具机制。
+- [**配置向导与交互逻辑 (Setup & Wizard)**](./modules/setup-wizard.md): 涵盖从命令行开箱入驻、动态互动表单构建到敏感信息挂载校验等全流程。
 - [**插件系统与扩展性 (Extensibility)**](./modules/extensibility.md): 揭秘插件加载引擎、全生命周期 Hook 系统及插件开发 SDK。
 - [**高级能力与交互 (Capabilities & UI)**](./modules/capabilities.md): 包含 ACP 协议层、TUI 终端界面、Canvas 富文本渲染以及多模态感知（语音/视觉/视频）流水线。
 - [**扩展生态概览 (Extensions Ecosystem)**](./modules/extensions-ecosystem.md): 概括 `extensions/` 目录下各类插件（渠道、提供商、技能、存储）的组织方式与功能。
