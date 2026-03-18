@@ -446,6 +446,7 @@ export type MemorySearchConfig = {
 
 export type WebSearchProviderConfig = {
   apiKey?: SecretInput;
+  [key: string]: unknown;
 };
 
 export type WebSearchConfig = {
@@ -461,11 +462,12 @@ export type WebSearchConfig = {
   cacheTtlMinutes?: number;
   /** Top-level API key (used when no provider sub-config key is set). */
   apiKey?: SecretInput;
-  brave?: WebSearchProviderConfig & { mode?: string };
   gemini?: WebSearchProviderConfig;
   grok?: WebSearchProviderConfig;
   kimi?: WebSearchProviderConfig;
   perplexity?: WebSearchProviderConfig;
+  /** Plugin-written provider config (dynamic keys not covered above). */
+  [key: string]: unknown;
 };
 
 export type ToolsConfig = {
