@@ -1,90 +1,170 @@
-# 模块分析：Auto-Reply & Dispatch
+# 模块深度分析：自动回复引擎
 
-## 自动回复引擎 — `src/auto-reply/` (67 文件)
+> 基于 `src/auto-reply/status.ts`（901 行）及相关源码分析，覆盖状态生成、指令系统、回复调度。
 
-自动回复是消息从渠道进入到 Agent 执行的核心调度层，实现了状态机驱动的消息分发。
+## 1. 状态消息构建
 
-```mermaid
-stateDiagram-v2
-    [*] --> Idle: 等待消息
-    Idle --> InboundReceived: 收到消息
-    InboundReceived --> CommandDetect: 指令检测
-    CommandDetect --> CommandExec: 匹配到指令
-    CommandDetect --> TriggerMatch: 非指令消息
-    TriggerMatch --> Debounce: 触发器匹配成功
-    Debounce --> AgentDispatch: 去抖完成
-    AgentDispatch --> Processing: Agent 执行中
-    Processing --> StreamReply: 流式回复
-    StreamReply --> HeartbeatReply: 心跳回复
-    HeartbeatReply --> Idle: 回复完成
-    CommandExec --> Idle: 指令执行完毕
+`buildStatusMessage()` （L412-L689）是系统状态的完整快照生成器，输出格式化的多行状态报告：
+
+```
+🦞 OpenClaw 2026.3.14 (abc1234)
+⏱ 1.2s
+🧠 Model: anthropic/claude-sonnet-4-5 · 🔑 api-key
+↪️ Fallback: openai/gpt-4o (rate limit)
+🧮 Tokens: 12.3K in / 3.2K out · 💵 Cost: $0.08
+🗄️ Cache: 85% hit · 10.2K cached, 1.5K new
+📚 Context: 15.7K/200K (8%) · 🧹 Compactions: 2
+📎 Media: vision x2 ok (anthropic/claude-sonnet-4-5) · audio off
+🧵 Session: agent:default · updated 3m ago
+⚙️ Runtime: direct · Think: medium · Fast: on
+🔊 Voice: auto · provider=elevenlabs · limit=4096 · summary=on
+👥 Activation: mention · 🪢 Queue: fifo (depth 3 · debounce 2s · cap 10)
 ```
 
-### 核心组件
+### 1.1 模型认证模式解析
 
-| 文件                        | 大小 | 功能                                      |
-| --------------------------- | ---- | ----------------------------------------- |
-| `status.ts`                 | 28KB | 状态机总控，管理全局回复状态              |
-| `reply.ts`                  | 入口 | 回复分发路由                              |
-| `chunk.ts`                  | 14KB | 回复文本智能分块（按段落/代码块边界切分） |
-| `command-auth.ts`           | 12KB | 指令权限校验                              |
-| `commands-registry.ts`      | 15KB | 指令注册中心                              |
-| `commands-registry.data.ts` | 23KB | 内置指令定义数据                          |
-| `envelope.ts`               | 8KB  | 消息信封解析/构造                         |
-| `dispatch.ts`               | 3KB  | 消息分发路由                              |
-| `inbound-debounce.ts`       | 3KB  | 入站消息去抖                              |
-| `templating.ts`             | 8KB  | 回复模板引擎                              |
-| `thinking.ts`               | 3KB  | 推理展示控制                              |
-| `skill-commands.ts`         | 6KB  | 技能指令处理                              |
-
-### 指令系统
-
-```mermaid
-flowchart TD
-    MSG["收到消息"] --> DETECT["command-detection.ts<br/>指令检测"]
-    DETECT --> AUTH["command-auth.ts (12KB)<br/>权限校验：Owner/Admin/User"]
-    AUTH --> REGISTRY["commands-registry.ts (15KB)<br/>查找指令处理器"]
-    REGISTRY --> EXEC["执行指令"]
-
-    subgraph "内置指令 (commands-registry.data.ts)"
-        STOP["/stop — 终止当前任务"]
-        MODEL["/model — 切换模型"]
-        THINK["/think — 切换推理模式"]
-        VERBOSE["/verbose — 日志级别"]
-        RESET["/reset — 重置会话"]
-        STATUS_CMD["/status — 查看状态"]
-        HELP["/help — 帮助"]
-    end
+```typescript
+// L97-L121 — 5 种认证模式
+type NormalizedAuthMode = "api-key" | "oauth" | "token" | "aws-sdk" | "mixed" | "unknown";
+// 用于决定是否显示费用估算（仅 api-key 和 mixed 模式显示）
+const showCost = effectiveCostAuthMode === "api-key" || effectiveCostAuthMode === "mixed";
 ```
 
-### 回复分发流
+### 1.2 使用量统计来源
+
+**双数据源策略**（L211-L305）：
+```typescript
+// 优先使用 session entry 中的 token 统计
+let totalTokens = entry?.totalTokens;
+// 但如果 session 日志中有更准确的数据则使用日志
+if (args.includeTranscriptUsage) {
+  const logUsage = readUsageFromSessionLog(sessionId, entry, agentId);
+  // 日志中的 tokens 更大 → 使用日志值
+  if (candidate > totalTokens) totalTokens = candidate;
+}
+```
+
+**日志尾部读取优化**：仅读取最后 8KB（`TAIL_BYTES = 8192`），解析最新的 usage 记录。
+
+### 1.3 上下文窗口计算
+
+```typescript
+const formatTokens = (total, contextTokens) => {
+  const pct = ctx ? Math.round((total / ctx) * 100) : null;
+  return `${totalLabel}/${ctxLabel}${pct !== null ? ` (${pct}%)` : ""}`;
+};
+// 输出如: "15.7K/200K (8%)"
+```
+
+### 1.4 运行时标签
+
+```typescript
+// L123-L165 — 沙箱模式检测
+function resolveRuntimeLabel(args) {
+  // sandbox.mode: "off" → "direct"
+  // sandbox.mode: "all" → "docker/all"
+  // sandbox.mode: "untrusted" + 非主会话 → "docker/untrusted"
+  // sandbox.mode: "untrusted" + 主会话 → "direct/untrusted"
+}
+```
+
+---
+
+## 2. 指令系统（Chat Commands）
+
+### 2.1 指令分类
+
+```typescript
+const CATEGORY_ORDER: CommandCategory[] = [
+  "session",    // /new, /reset, /compact, /stop
+  "options",    // /think, /model, /fast, /verbose
+  "status",     // /status, /whoami, /context
+  "management", // /config, /debug
+  "media",      // 媒体相关指令
+  "tools",      // /skill, 工具指令
+  "docks",      // Dock 相关
+];
+```
+
+### 2.2 指令注册（`commands-registry.ts`）
 
 ```mermaid
 flowchart LR
-    AGENT["Agent 输出"] --> CHUNK["chunk.ts (14KB)<br/>智能分块"]
-    CHUNK --> TEMPLATE["templating.ts (8KB)<br/>模板渲染"]
-    TEMPLATE --> STREAM["流式发送<br/>按段落/代码块边界"]
-    STREAM --> TYPING["typing 状态管理"]
-    STREAM --> REACTIONS["状态反应<br/>👀→✅/❌"]
-
-    AGENT --> HEARTBEAT["heartbeat.ts (5KB)<br/>心跳回复"]
-    HEARTBEAT --> SCHEDULE["定时检查<br/>长任务心跳反馈"]
+    PLUGINS["插件指令"] --> REGISTRY["listChatCommands()"]
+    BUILTIN["内置指令"] --> REGISTRY
+    REGISTRY --> SURFACE{"渠道兼容?"}
+    SURFACE -->|是| AVAILABLE["可用指令集"]
+    SURFACE -->|否| HIDDEN["隐藏"]
 ```
 
-### 消息去抖
+### 2.3 Help 消息生成
 
-`inbound-debounce.ts` 实现入站消息去抖，防止用户快速连发多条消息触发多次 Agent 执行。策略包括：
+```typescript
+// L727-L756 — 精简帮助输出
+buildHelpMessage(cfg):
+  Session: /new | /reset | /compact | /stop
+  Options: /think <level> | /model <id> | /fast on|off | /verbose on|off
+  Status: /status | /whoami | /context
+  Skills: /skill <name> [input]
+  More: /commands for full list
+```
 
-- 时间窗口合并
-- 相同会话键去重
-- 配置化去抖间隔
+分页显示：`COMMANDS_PER_PAGE = 8`，支持 `/commands 2` 查看第二页。
 
-### 回复智能分块
+---
 
-`chunk.ts`（14KB）实现了基于语义边界的文本分块：
+## 3. 回复调度
 
-- 优先在段落分隔处切分
-- 尊重 Markdown 代码块边界（不在代码块中间切断）
-- 缩进级别保持
-- 列表项不拆分
-- 长单行代码块特殊处理
+### 3.1 发送策略（Send Policy）
+
+`sessions/send-policy.ts` 实现消息发送的权限控制：
+- `deny`：发送被会话策略阻止
+- `allow`：允许发送
+- 根据渠道类型（private/group/channel）和会话配置决定
+
+### 3.2 Fallback 状态追踪
+
+```typescript
+// fallback-state.ts
+resolveActiveFallbackState({
+  selectedModelRef: "anthropic/claude-sonnet-4-5",
+  activeModelRef: "openai/gpt-4o",
+  state: sessionEntry,
+}) → { active: true, reason: "rate limit" }
+```
+
+### 3.3 费用估算
+
+```typescript
+// 仅在 api-key 或 mixed 认证模式下显示
+const cost = estimateUsageCost({
+  usage: { input: inputTokens, output: outputTokens },
+  cost: resolveModelCostConfig({ provider, model, config }),
+});
+// 格式化: "$0.08"
+```
+
+---
+
+## 4. 媒体理解决策
+
+```typescript
+// L346-L387 — 媒体处理结果展示
+formatMediaUnderstandingLine(decisions):
+  // 成功: "vision x2 ok (anthropic/claude-sonnet-4-5)"
+  // 禁用: "audio off"
+  // 跳过: "vision skipped (no-model)"
+  // 拒绝: "vision denied"
+  // 无附件: "vision none"
+```
+
+---
+
+## 5. 语音模式
+
+```typescript
+// L389-L410 — TTS 自动模式检测
+formatVoiceModeLine(config, sessionEntry):
+  // autoMode: "off" → 不显示
+  // autoMode: "auto"/"on" → "🔊 Voice: auto · provider=elevenlabs · limit=4096 · summary=on"
+```

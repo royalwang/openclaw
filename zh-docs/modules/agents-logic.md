@@ -1,192 +1,236 @@
-# 模块分析：Agents, Context & Memory
+# 模块深度分析：Agent 引擎
 
-## 代理核心 — `src/agents/` (579 文件) ⭐ 最大模块
+> 基于 `src/agents/` 源码逐行分析，覆盖 Agent 执行流程、模型选择、会话管理、子代理系统。
 
-Agents 模块是 OpenClaw 的"灵魂"，驱动 AI 推理、工具调用、子代理编排和会话管理。
+## 1. Agent 命令执行全流程
+
+`agent-command.ts`（1334 行 / 43KB）是 Agent 执行的核心入口。`agentCommandInternal()` 的完整流程：
 
 ```mermaid
-graph TB
-  subgraph "Agent 执行层"
-    CMD["agent-command.ts (43KB)<br/>执行编排器"]
-    SCOPE["agent-scope.ts (11KB)<br/>作用域管理"]
-    WS_RUN["workspace-run.ts<br/>工作区执行"]
-  end
-
-  subgraph "认知循环 Pi Runner"
-    PIR["pi-embedded-runner/<br/>嵌入式认知引擎"]
-    SUB_PI["pi-embedded-subscribe.ts (26KB)<br/>流式订阅处理"]
-    HELPER["pi-embedded-helpers/<br/>辅助工具集"]
-    HANDLERS["subscribe.handlers/<br/>消息/工具/生命周期处理器"]
-  end
-
-  subgraph "模型与供应商"
-    SEL["model-selection.ts (20KB)<br/>模型选择算法"]
-    FALL["model-fallback.ts (26KB)<br/>故障降级链"]
-    CAT["model-catalog.ts (9KB)<br/>模型目录"]
-    COMPAT["model-compat.ts (5KB)<br/>兼容层"]
-    PROVIDERS["models-config.providers.ts (26KB)<br/>供应商配置"]
-  end
-
-  subgraph "子代理系统"
-    REG["subagent-registry.ts (44KB)<br/>子代理注册中心"]
-    SPAWN["subagent-spawn.ts (25KB)<br/>子代理孵化"]
-    CTRL["subagent-control.ts (24KB)<br/>子代理控制"]
-    ANN["subagent-announce.ts (52KB)<br/>结果发布"]
-    DEPTH["subagent-depth.ts<br/>嵌套深度控制"]
-  end
-
-  subgraph "工具系统"
-    BASH["bash-tools.exec.ts (21KB)<br/>Shell 执行"]
-    PROC["bash-tools.process.ts (22KB)<br/>进程管理"]
-    PI_TOOLS["pi-tools.ts (24KB)<br/>工具注册"]
-    READ["pi-tools.read.ts (26KB)<br/>文件读取工具"]
-    POLICY["tool-policy-pipeline.ts<br/>工具策略管道"]
-    LOOP["tool-loop-detection.ts (18KB)<br/>循环检测"]
-  end
-
-  CMD --> PIR
-  CMD --> SEL & FALL
-  PIR --> SUB_PI --> HANDLERS
-  PIR --> HELPER
-  CMD --> REG
-  REG --> SPAWN & CTRL & ANN
-  PIR --> BASH & PI_TOOLS
-  PI_TOOLS --> POLICY & LOOP
+flowchart TD
+    MSG["用户消息 + opts"] --> PREPARE["prepareAgentCommandExecution()"]
+    PREPARE --> VALIDATE["验证消息/sessionKey/agentId"]
+    VALIDATE --> SECRET_REF["resolveCommandSecretRefsViaGateway()<br/>从 Gateway 解析密钥引用"]
+    SECRET_REF --> SESSION["resolveSession()<br/>会话解析/创建"]
+    SESSION --> WORKSPACE["ensureAgentWorkspace()<br/>确保工作区目录存在"]
+    WORKSPACE --> ACP_CHECK{"ACP 会话?"}
+    
+    ACP_CHECK -->|是| ACP_RUN["acpManager.runTurn()<br/>ACP 外部代理执行"]
+    ACP_CHECK -->|否| PROVIDER_CHECK{"CLI Provider?"}
+    
+    PROVIDER_CHECK -->|是| CLI_RUN["runCliAgent()<br/>外部 CLI 代理"]
+    PROVIDER_CHECK -->|否| PI_RUN["runEmbeddedPiAgent()<br/>内嵌 Pi Runner"]
+    
+    PI_RUN --> FALLBACK["runWithModelFallback()<br/>模型故障自动切换"]
+    FALLBACK --> DELIVERY["deliverAgentCommandResult()<br/>结果投递"]
 ```
 
-### Agent Command — 执行编排器
+### 1.1 会话准备阶段（`prepareAgentCommandExecution`）
 
-`agent-command.ts`（43KB）是单次"代理回合"的总指挥：
+关键步骤（L536-L708）：
 
-1. 解析会话背景、Agent 配置
-2. 准备工作空间（沙箱路径、引导文件）
-3. 选择模型（`model-selection.ts`）并处理 Auth Profile 轮换
-4. 构建 System Prompt（`system-prompt.ts` 32KB）
-5. 启动 Pi Runner 认知循环
-6. 处理子代理孵化请求
+```typescript
+// 1. 消息校验：空消息直接抛异常
+if (!message.trim()) throw new Error("Message (--message) is required");
 
-### Pi Embedded Runner — 认知循环
+// 2. 内部事件注入：将系统事件前置到用户消息
+const body = prependInternalEventContext(message, opts.internalEvents);
 
-核心 AI 推理引擎，负责：
+// 3. 密钥解析：通过 Gateway RPC 解析 ${SECRET_REF}
+const { resolvedConfig, diagnostics } = await resolveCommandSecretRefsViaGateway({...});
 
-- 维护对话历史（含压缩 `compaction.ts` 15KB）
-- 应用 System Prompt + 上下文注入
-- 流式响应处理（`pi-embedded-subscribe.ts` 26KB）
-- 工具调用执行与结果注入
-- 会话写锁（`session-write-lock.ts` 16KB）防止并发冲突
+// 4. Agent ID 验证：检查 agentId 是否存在于配置
+const knownAgents = listAgentIds(cfg);
+if (!knownAgents.includes(agentId)) throw new Error(`Unknown agent id...`);
 
-### Model Fallback — 故障降级
+// 5. 会话解析：查找或创建会话（sessionId + sessionKey → sessionEntry）
+const sessionResolution = resolveSession({ cfg, to, sessionId, sessionKey, agentId });
+
+// 6. 工作区初始化：创建 Agent 工作目录及引导文件
+const workspace = await ensureAgentWorkspace({ dir, ensureBootstrapFiles: !skipBootstrap });
+```
+
+### 1.2 Agent 执行分发（`runAgentAttempt`）
+
+三种执行路径（L352-L534）：
+
+| 路径 | 条件 | 执行方式 |
+|------|------|---------|
+| **CLI Provider** | `isCliProvider(provider)` | `runCliAgent()` — 外部进程调用 Claude CLI / Codex CLI |
+| **ACP** | `acpResolution.kind === "ready"` | `acpManager.runTurn()` — Agent Client Protocol 外部代理 |
+| **嵌入式 Pi** | 默认路径 | `runEmbeddedPiAgent()` — 内嵌 @mariozechner/pi-coding-agent |
+
+**CLI Session 过期处理**（L412-L483）：
+```typescript
+// CLI provider 返回 FailoverError(reason="session_expired") 时
+// 1. 清除 sessionStore 中的过期 sessionId
+// 2. 无 sessionId 重试 → 创建新 CLI session
+// 3. 成功后将新 sessionId 写回 sessionStore
+```
+
+---
+
+## 2. 模型选择引擎
+
+`model-selection.ts`（676 行）实现了多层模型解析策略：
+
+### 2.1 模型引用解析（ModelRef）
 
 ```mermaid
 flowchart LR
-    REQ["模型请求"] --> PRIMARY["主模型"]
-    PRIMARY -->|成功| OK["返回结果"]
-    PRIMARY -->|失败| OBSERVE["model-fallback-observation.ts<br/>记录失败"]
-    OBSERVE --> FALLBACK["降级链中下一个模型"]
-    FALLBACK -->|成功| OK
-    FALLBACK -->|全部失败| ERR["failover-error.ts<br/>报告错误"]
+    RAW["原始输入<br/>'sonnet-4.5'"] --> ALIAS{"别名索引匹配?"}
+    ALIAS -->|是| ALIAS_REF["→ anthropic/claude-sonnet-4-5"]
+    ALIAS -->|否| PARSE["parseModelRef()"]
+    PARSE --> SLASH{"包含 '/'?"}
+    SLASH -->|是| SPLIT["provider/model 拆分"]
+    SLASH -->|否| DEFAULT_P["使用默认 Provider"]
+    SPLIT --> NORMALIZE["normalizeModelRef()"]
+    DEFAULT_P --> NORMALIZE
+    NORMALIZE --> PROVIDER_NORM["normalizeProviderModelId()"]
 ```
 
-### Subagent 系统
+### 2.2 Provider 特定标准化
 
-支持层级式子代理编排：
+```typescript
+// Anthropic 短名称映射（L96-L108）
+"opus-4.6"   → "claude-opus-4-6"
+"sonnet-4.5" → "claude-sonnet-4-5"
 
-- **注册中心** (`subagent-registry.ts` 44KB)：管理子代理生命周期
-- **孵化器** (`subagent-spawn.ts` 25KB)：创建子代理实例，传递工作上下文
-- **控制器** (`subagent-control.ts` 24KB)：暂停/恢复/终止子代理
-- **发布器** (`subagent-announce.ts` 52KB)：子代理完成后向父级汇报结果
-- **深度控制** (`subagent-depth.ts`)：防止无限递归嵌套
+// Google 模型 ID 标准化（L121-L123）
+normalizeGoogleModelId(model)  // gemini-2.0-flash → gemini-2.0-flash
 
-### Auth Profiles — 认证配置
+// OpenRouter 无斜杠模型补全（L128-L130）
+"aurora-alpha" → "openrouter/aurora-alpha"  // 原生 OpenRouter 模型加前缀
+```
 
-管理 LLM 供应商 API 密钥的核心模块：
+### 2.3 模型白名单系统（`buildAllowedModelSet`）
 
-- 多密钥轮换（Round Robin）
-- 故障冷却机制（Cooldown + Auto-expiry）
-- 运行时快照保存
-- CLI 外部同步
+```typescript
+// L409-L505 — 构建允许的模型集合
+const rawAllowlist = Object.keys(cfg.agents?.defaults?.models ?? {});
+// 空白名单 → allowAny: true（允许所有目录中的模型）
+// 非空白名单 → 严格匹配，但自动包含 fallback 模型
+```
+
+### 2.4 默认模型回退策略（`resolveConfiguredModelRef`）
+
+```typescript
+// L271-L335 — 当配置的默认 provider 不可用时
+const configuredProviders = cfg.models?.providers;
+if (!hasDefaultProvider) {
+  // 查找第一个有模型的 provider 作为回退
+  const availableProvider = Object.entries(configuredProviders).find(
+    ([, cfg]) => cfg?.models?.length > 0
+  );
+  return { provider: providerName, model: firstModel.id };
+}
+```
+
+### 2.5 Thinking 级别解析
+
+7 个级别：`off` → `minimal` → `low` → `medium` → `high` → `xhigh` → `adaptive`
+
+优先级链：
+1. 每模型配置（`models[key].params.thinking`）
+2. 全局默认（`agents.defaults.thinkingDefault`）
+3. 模型自动检测（`resolveThinkingDefaultForModel()`）
 
 ---
 
-## 上下文引擎 — `src/context-engine/` (7 文件)
+## 3. 模型故障转移（Model Fallback）
 
-动态上下文注入的核心模块。
-
-| 文件                 | 用途                 |
-| -------------------- | -------------------- |
-| `registry.ts` (10KB) | 上下文注入器注册中心 |
-| `delegate.ts`        | 注入委托器           |
-| `types.ts` (5KB)     | 上下文类型定义       |
-| `init.ts`            | 初始化               |
-| `legacy.ts`          | 兼容层               |
-
-### 注入内容
-
-注入到 Agent Prompt 的上下文包括：
-
-- 当前时间与时区
-- 用户/发送者信息
-- 工作区文件内容
-- Memory 检索结果（RAG）
-- 插件注入的自定义上下文
-
----
-
-## 记忆引擎 — `src/memory/` (102 文件)
-
-为 Agent 提供持久化记忆和知识检索能力。
+`model-fallback.ts` 实现了自动模型切换：
 
 ```mermaid
-graph TB
-  subgraph "索引管理"
-    MGR["manager.ts (28KB)<br/>MemoryIndexManager"]
-    SYNC["manager-sync-ops.ts (45KB)<br/>同步操作"]
-    EMB_OPS["manager-embedding-ops.ts (30KB)<br/>嵌入操作"]
-    SEARCH["manager-search.ts (5KB)<br/>搜索操作"]
-  end
-
-  subgraph "嵌入引擎"
-    EMB_MAIN["embeddings.ts (11KB)<br/>统一接口"]
-    OPENAI["embeddings-openai.ts"]
-    GEMINI["embeddings-gemini.ts (10KB)"]
-    VOYAGE["embeddings-voyage.ts"]
-    OLLAMA["embeddings-ollama.ts"]
-    MISTRAL["embeddings-mistral.ts"]
-  end
-
-  subgraph "QMD 查询管理"
-    QMD["qmd-manager.ts (69KB)<br/>智能查询管理器"]
-    QMD_P["qmd-process.ts<br/>查询处理"]
-    QMD_Q["qmd-query-parser.ts<br/>查询解析"]
-    QMD_S["qmd-scope.ts<br/>查询范围"]
-  end
-
-  subgraph "检索算法"
-    HYBRID["hybrid.ts<br/>混合检索"]
-    MMR["mmr.ts (6KB)<br/>最大边际相关性"]
-    DECAY["temporal-decay.ts (4KB)<br/>时间衰减"]
-    EXPAND["query-expansion.ts (13KB)<br/>查询扩展"]
-  end
-
-  MGR --> SYNC & EMB_OPS & SEARCH
-  EMB_OPS --> EMB_MAIN
-  EMB_MAIN --> OPENAI & GEMINI & VOYAGE & OLLAMA & MISTRAL
-  SEARCH --> HYBRID --> MMR & DECAY
-  MGR --> QMD
+flowchart TD
+    RUN["runAgentAttempt(primary model)"] --> SUCCESS{"成功?"}
+    SUCCESS -->|是| DONE["返回结果"]
+    SUCCESS -->|否| FAILOVER["FailoverError"]
+    FAILOVER --> HAS_FALLBACK{"有 fallback 模型?"}
+    HAS_FALLBACK -->|是| NEXT["切换到下一个 fallback"]
+    HAS_FALLBACK -->|否| ERROR["返回错误"]
+    NEXT --> RETRY["runAgentAttempt(fallback model)<br/>isFallbackRetry = true"]
+    RETRY --> SUCCESS
 ```
 
-### 核心特性
+**关键行为**：
+- `isFallbackRetry = true` 时，替换用户消息为 "Continue where you left off. The previous model attempt failed or timed out."
+- Fallback 重试时**不携带原始图片**（`images: undefined`）
+- 由 `resolveEffectiveModelFallbacks()` 从配置中解析 fallback 链
 
-- **混合检索**：向量语义搜索 + FTS5 关键词搜索，自动合并权重
-- **MMR 算法**：确保搜索结果多样性，避免信息冗余
-- **时间衰减**：优先推荐较新的记忆
-- **查询扩展**：自动扩展用户查询以提高召回率
-- **批量嵌入**：支持 Gemini/Voyage 等供应商的批量处理 API
-- **自动索引**：监控工作区 Markdown 文件，自动更新索引
-- **QMD 智能管理**：69KB 的查询管理器，支持复杂的记忆检索场景
+---
 
-### 存储后端
+## 4. 子代理系统（Subagent）
 
-- **SQLite + sqlite-vec**：向量存储与检索
-- **SQLite FTS5**：全文搜索索引
-- 支持远程 embedding 服务 (`embeddings-remote-*.ts`)
+### 4.1 子代理模型选择
+
+```typescript
+// model-selection.ts L377-L407
+resolveSubagentConfiguredModelSelection():
+  1. Agent 专属子代理模型 → agents[id].subagents.model
+  2. 全局子代理默认 → agents.defaults.subagents.model
+  3. Agent 自身模型 → agents[id].model
+```
+
+### 4.2 子代理注册
+
+`subagent-registry.ts` 维护全局子代理注册表，`initSubagentRegistry()` 在 Gateway 启动时调用。
+
+---
+
+## 5. ACP（Agent Client Protocol）执行路径
+
+当会话绑定到 ACP 外部代理时（L760-L860）：
+
+```typescript
+// 1. ACP 策略检查
+const dispatchPolicyError = resolveAcpDispatchPolicyError(cfg);
+const agentPolicyError = resolveAcpAgentPolicyError(cfg, acpAgent);
+
+// 2. ACP 转发执行
+await acpManager.runTurn({
+  text: body, mode: "prompt", requestId: runId,
+  onEvent: (event) => {
+    if (event.type === "text_delta") {
+      // 使用 AcpVisibleTextAccumulator 过滤 SILENT_REPLY_TOKEN
+      const result = visibleTextAccumulator.consume(event.text);
+      if (result) emitAgentEvent({ stream: "text", data: { delta: result.delta } });
+    }
+  }
+});
+
+// 3. ACP 会话记录持久化
+await persistAcpTurnTranscript({ body, finalText, sessionFile, ... });
+```
+
+**Silent Reply 过滤**（L195-L270）：`createAcpVisibleTextAccumulator()` 缓冲初始文本，检测是否以 `SILENT_REPLY_TOKEN` 开头，如果是则抑制输出。
+
+---
+
+## 6. 会话生命周期
+
+### 会话条目字段
+
+```typescript
+type SessionEntry = {
+  sessionId: string;
+  providerOverride?: string;   // 会话级 Provider 覆盖
+  modelOverride?: string;      // 会话级模型覆盖
+  authProfileOverride?: string;
+  thinkingLevel?: ThinkLevel;
+  verboseLevel?: VerboseLevel;
+  compactionCount?: number;    // 上下文压缩次数
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheRead?: number;          // 缓存命中 Token
+  cacheWrite?: number;         // 缓存写入 Token
+  updatedAt?: number;
+  // ...
+};
+```
+
+### 覆盖字段清理
+
+12 个覆盖字段在会话删除时清理（L106-L127）：
+`providerOverride`, `modelOverride`, `authProfileOverride`, `authProfileOverrideSource`, `authProfileOverrideCompactionCount`, `fallbackNoticeSelectedModel`, `fallbackNoticeActiveModel`, `fallbackNoticeReason`, `claudeCliSessionId`

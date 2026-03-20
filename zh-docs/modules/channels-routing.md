@@ -1,95 +1,156 @@
-# 模块分析：Channels & Routing
+# 模块深度分析：渠道与路由
 
-## 渠道抽象 — `src/channels/` (67 文件)
+> 基于 `src/routing/session-key.ts`（254 行）及 `src/channels/plugins/types.ts` 源码分析。
 
-渠道层负责将各平台消息统一为内部格式，并将回复分发到对应平台。
+## 1. 会话键（Session Key）系统
 
-```mermaid
-graph TB
-  subgraph "渠道抽象层"
-    REG["registry.ts (6KB)<br/>渠道注册中心"]
-    CFG["channel-config.ts (5KB)<br/>渠道配置解析"]
-    TARGETS["targets.ts (3KB)<br/>目标解析"]
-  end
+Session Key 是 OpenClaw 路由系统的核心标识符，决定消息如何路由到正确的 Agent 会话。
 
-  subgraph "消息处理"
-    ACK["ack-reactions.ts<br/>确认反应 (👀/✅/❌)"]
-    STATUS_R["status-reactions.ts (11KB)<br/>状态反应管理"]
-    TYPING["typing.ts (2KB)<br/>打字状态"]
-    DRAFT["draft-stream-controls.ts<br/>草稿流控"]
-    DEBOUNCE["inbound-debounce-policy.ts<br/>入站防抖策略"]
-  end
+### 1.1 Session Key 格式
 
-  subgraph "访问控制"
-    ALLOW["allowlist-match.ts (3KB)<br/>白名单匹配"]
-    AL_DIR["allowlists/<br/>各渠道白名单实现"]
-    MENTION["mention-gating.ts<br/>@提及过滤"]
-    CMD_GATE["command-gating.ts<br/>指令权限门控"]
-    ALLOW_FROM["allow-from.ts<br/>来源白名单"]
-  end
-
-  subgraph "传输层"
-    TRANSPORT["transport/<br/>底层传输抽象"]
-    PLUGINS_CH["plugins/<br/>渠道插件适配"]
-    WEB_CH["web/<br/>Web 渠道实现"]
-  end
-
-  REG --> CFG & TARGETS
-  REG --> ACK & STATUS_R & TYPING
-  REG --> ALLOW & MENTION & CMD_GATE
-  TRANSPORT --> PLUGINS_CH & WEB_CH
+```
+agent:<agentId>:<scope>
 ```
 
-### 核心设计
+支持的形态（`SessionKeyShape`）：
+- `agent`：标准格式（`agent:main:main`）
+- `legacy_or_alias`：遗留格式（无 `agent:` 前缀）
+- `malformed_agent`：以 `agent:` 开头但解析失败
+- `missing`：空值
 
-- **统一注册**：`registry.ts` 注册所有渠道（内置 + 插件），对外暴露标准化接口
-- **消息信封**：`session-envelope.ts` 封装跨渠道的会话元数据
-- **状态反应**：通过 emoji 反应（👀 处理中 → ✅ 完成 / ❌ 失败）向用户反馈状态
-- **白名单机制**：多级访问控制（渠道级 → 群组级 → 用户级）
-- **@提及过滤**：群组中仅响应 @机器人名 的消息
+### 1.2 Agent ID 标准化
 
-### 线程绑定
+```typescript
+// session-key.ts L89-L107
+function normalizeAgentId(value: string): string {
+  // 正则: /^[a-z0-9][a-z0-9_-]{0,63}$/i
+  // 合法: 字母数字开头，最长 64 字符
+  // 非法字符: 替换为 "-"，去除首尾 "-"，转小写
+  // 空值: 回退到 DEFAULT_AGENT_ID = "main"
+}
+```
 
-`thread-bindings-policy.ts`（6KB）实现渠道线程与 Agent 会话的绑定策略，支持 Discord threads、Telegram topics 等平台特有的线程模型。
+### 1.3 四种 DM 会话作用域
 
----
-
-## 路由引擎 — `src/routing/` (11 文件)
-
-负责将入站消息精准路由到目标 Agent。
+`buildAgentPeerSessionKey()` 支持 4 种 DM 隔离策略（L127-L174）：
 
 ```mermaid
 flowchart TD
-    MSG["入站消息<br/>InboundEnvelope"] --> RESOLVE["resolve-route.ts (23KB)<br/>路由解析"]
-    RESOLVE --> ACCOUNT["account-id.ts<br/>账户 ID 解析"]
-    RESOLVE --> BINDING["bindings.ts<br/>绑定关系查找"]
-    RESOLVE --> SKEY["session-key.ts (8KB)<br/>会话键生成"]
-
-    SKEY --> COMPOSE["会话键组合<br/>channel + account + chatId + agentId"]
-
-    RESOLVE --> RESULT["路由结果<br/>Agent ID + Session Key"]
+    DM["DM 消息"] --> SCOPE{"dmScope"}
+    SCOPE -->|main| MAIN["agent:main:main<br/>所有用户共享一个会话"]
+    SCOPE -->|per-peer| PEER["agent:main:direct:user123<br/>每用户独立会话"]
+    SCOPE -->|per-channel-peer| CP["agent:main:telegram:direct:user123<br/>每渠道+用户独立"]
+    SCOPE -->|per-account-channel-peer| ACP["agent:main:telegram:acc1:direct:user123<br/>每账号+渠道+用户独立"]
 ```
 
-### Session Key 生成
+| 作用域 | Session Key 格式 | 隔离级别 |
+|--------|-----------------|---------|
+| `main` | `agent:{id}:{mainKey}` | 无隔离 |
+| `per-peer` | `agent:{id}:direct:{peerId}` | 按对端用户 |
+| `per-channel-peer` | `agent:{id}:{channel}:direct:{peerId}` | 按渠道+用户 |
+| `per-account-channel-peer` | `agent:{id}:{channel}:{accountId}:direct:{peerId}` | 按账号+渠道+用户 |
 
-`session-key.ts`（8KB）实现了稳定的会话键生成算法：
+### 1.4 群组/频道会话键
 
+```typescript
+// 非 DM 消息: peerKind = "group" | "channel"
+return `agent:${agentId}:${channel}:${peerKind}:${peerId}`;
+// 例: agent:main:telegram:group:chat_12345
 ```
-sessionKey = hash(channelType, accountId, chatId, agentId)
+
+### 1.5 身份链接（Identity Links）
+
+```typescript
+// L176-L220 — 跨渠道用户身份关联
+function resolveLinkedPeerId(params) {
+  // identityLinks 配置：
+  // { "canonical_user": ["telegram:user123", "whatsapp:user456"] }
+  // 
+  // 当 telegram:user123 发消息时 → 解析为 "canonical_user"
+  // 当 whatsapp:user456 发消息时 → 也解析为 "canonical_user"
+  // 效果：跨渠道的同一用户共享会话
+}
 ```
 
-确保：
+### 1.6 线程会话键
 
-- 同一用户在同一渠道与同一 Agent 的对话始终映射到同一会话
-- 不同渠道的对话隔离
-- 跨设备的同一用户共享会话
+```typescript
+// L234-L253 — 线程消息路由
+resolveThreadSessionKeys({ baseSessionKey, threadId }):
+  // 有 threadId → `${baseKey}:thread:${threadId}`
+  // 无 threadId → 使用 baseSessionKey
+```
 
-### 路由解析 (`resolve-route.ts` 23KB)
+---
 
-路由解析的完整流程：
+## 2. 渠道插件类型系统
 
-1. 从消息中提取渠道类型和账户信息
-2. 查找 `openclaw.json` 中的绑定关系
-3. 处理默认账户警告（`default-account-warnings.ts`）
-4. 生成稳定的 session-key
-5. 返回目标 Agent + Session 组合
+`channels/plugins/types.ts` 导出了 50+ 类型，定义了渠道插件的完整适配器接口：
+
+### 2.1 适配器体系
+
+```mermaid
+flowchart LR
+    PLUGIN["ChannelPlugin"] --> LIFECYCLE["ChannelLifecycleAdapter<br/>启动/停止"]
+    PLUGIN --> MESSAGING["ChannelMessagingAdapter<br/>消息收发"]
+    PLUGIN --> OUTBOUND["ChannelOutboundAdapter<br/>主动发送"]
+    PLUGIN --> GROUP["ChannelGroupAdapter<br/>群组管理"]
+    PLUGIN --> THREADING["ChannelThreadingAdapter<br/>线程支持"]
+    PLUGIN --> HEARTBEAT["ChannelHeartbeatAdapter<br/>心跳检测"]
+    PLUGIN --> AUTH["ChannelAuthAdapter<br/>认证"]
+    PLUGIN --> SECURITY["ChannelSecurityAdapter<br/>安全策略"]
+    PLUGIN --> MENTION["ChannelMentionAdapter<br/>@提及"]
+    PLUGIN --> SETUP["ChannelSetupAdapter<br/>Onboarding"]
+    PLUGIN --> STATUS["ChannelStatusAdapter<br/>状态查询"]
+    PLUGIN --> PAIRING["ChannelPairingAdapter<br/>配对"]
+    PLUGIN --> CONFIG["ChannelConfigAdapter<br/>配置"]
+    PLUGIN --> COMMAND["ChannelCommandAdapter<br/>指令"]
+    PLUGIN --> ELEVATED["ChannelElevatedAdapter<br/>高级操作"]
+    PLUGIN --> GATEWAY["ChannelGatewayAdapter<br/>Gateway 集成"]
+    PLUGIN --> STREAMING["ChannelStreamingAdapter<br/>流式输出"]
+    PLUGIN --> ALLOWLIST["ChannelAllowlistAdapter<br/>白名单"]
+    PLUGIN --> DIRECTORY["ChannelDirectoryAdapter<br/>通讯录"]
+    PLUGIN --> RESOLVER["ChannelResolverAdapter<br/>解析"]
+    PLUGIN --> EXEC_APPROVAL["ChannelExecApprovalAdapter<br/>执行审批"]
+    PLUGIN --> AGENT_PROMPT["ChannelAgentPromptAdapter<br/>Agent 提示"]
+    PLUGIN --> MSG_ACTION["ChannelMessageActionAdapter<br/>消息操作"]
+    PLUGIN --> TOOL_DISCOVERY["ChannelMessageToolDiscovery<br/>工具发现"]
+    PLUGIN --> CONFIGURED_BINDING["ChannelConfiguredBindingProvider<br/>绑定"]
+```
+
+### 2.2 核心渠道
+
+| 渠道 | 源码路径 | 类型 |
+|------|---------|------|
+| Telegram | `src/telegram/` | 内置 |
+| Discord | `src/discord/` | 内置 |
+| Slack | `src/slack/` | 内置 |
+| Signal | `src/signal/` | 内置 |
+| iMessage | `src/imessage/` | 内置 |
+| WhatsApp Web | `src/web/` | 内置 |
+| MS Teams | `extensions/msteams/` | 插件 |
+| Matrix | `extensions/matrix/` | 插件 |
+| Zalo | `extensions/zalo/` | 插件 |
+| Voice Call | `extensions/voice-call/` | 插件 |
+
+---
+
+## 3. 路由消息流
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Channel as 渠道适配器
+    participant Router as 路由引擎
+    participant Session as 会话管理器
+    participant Agent as Agent 引擎
+
+    User->>Channel: 发送消息
+    Channel->>Router: 提取 peerId + chatType
+    Router->>Router: buildAgentPeerSessionKey()
+    Router->>Session: resolveSession(sessionKey)
+    Session-->>Router: SessionEntry
+    Router->>Agent: agentCommand(message, sessionKey)
+    Agent-->>Channel: 回复
+    Channel->>User: 投递回复
+```
