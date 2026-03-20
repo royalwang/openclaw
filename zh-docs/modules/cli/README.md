@@ -1,91 +1,182 @@
-# 模块分析：CLI & Commands
+# CLI 命令与工具开发文档
 
-## CLI 层 — `src/cli/` (176 文件)
+> 基于 `src/cli/`、`src/commands/`（151 个文件）、`src/wizard/` 源码分析。
 
-基于 Commander.js 的延迟加载命令体系。
+## 1. 架构概览
 
 ```mermaid
-graph TD
-  ENTRY["entry.ts<br/>runCli()"] --> PROGRAM["program.ts<br/>根命令"]
-  PROGRAM --> GW_CLI["gateway-cli/<br/>gateway run/status/stop"]
-  PROGRAM --> DAEMON_CLI["daemon-cli/<br/>daemon install/uninstall"]
-  PROGRAM --> CONFIG_CLI["config-cli.ts (44KB)<br/>config set/get/edit"]
-  PROGRAM --> CHANNELS_CLI["channels-cli.ts<br/>channels status/add"]
-  PROGRAM --> MEMORY_CLI["memory-cli.ts (30KB)<br/>memory search/index"]
-  PROGRAM --> PLUGINS_CLI["plugins-cli.ts (39KB)<br/>plugins install/list"]
-  PROGRAM --> MODELS_CLI["models-cli.ts (14KB)<br/>models list/set"]
-  PROGRAM --> HOOKS_CLI["hooks-cli.ts (25KB)<br/>hooks install/list"]
-  PROGRAM --> BROWSER_CLI["browser-cli.ts<br/>browser manage/inspect"]
-  PROGRAM --> MORE["...其他 60+ 子命令"]
+flowchart TD
+    ENTRY["src/entry.ts<br/>CLI 入口"] --> PARSE["命令行解析"]
+    PARSE --> DISPATCH["命令分发"]
+    
+    DISPATCH --> GW["gateway<br/>run/stop/status"]
+    DISPATCH --> CONFIG_CMD["config<br/>set/get/edit"]
+    DISPATCH --> SEND["message send"]
+    DISPATCH --> CHANNELS["channels status"]
+    DISPATCH --> SECURITY["security audit"]
+    DISPATCH --> ONBOARD["onboard<br/>向导"]
+    DISPATCH --> AGENT["agent<br/>执行"]
+    DISPATCH --> BACKUP["backup<br/>备份"]
+    DISPATCH --> PLUGINS_CMD["plugins<br/>install/list"]
+    
+    subgraph "UI 组件"
+      PROGRESS["progress.ts<br/>进度 UI"]
+      PALETTE["palette.ts<br/>调色板"]
+      TABLE["table.ts<br/>表格输出"]
+    end
 ```
 
-### 延迟加载机制
+## 2. 命令体系（151 个文件）
 
-CLI 命令采用延迟加载（lazy import），确保冷启动时不加载不需要的模块：
+### 核心命令
 
-- 根命令注册在 `program.ts` 中仅声明元数据
-- 实际处理函数通过 `await import(...)` 按需加载
-- `--version` 和 `--help` 走 Fast Path，跳过全量加载
+| 命令文件 | CLI 命令 | 说明 |
+|----------|---------|------|
+| `gateway.ts` | `openclaw gateway run` | 启动 Gateway |
+| `config.ts` | `openclaw config set/get` | 配置管理 |
+| `send.ts` | `openclaw message send` | 发送消息 |
+| `channels.ts` | `openclaw channels status` | 渠道状态 |
+| `security.ts` | `openclaw security audit` | 安全审计 |
+| `agent.ts` | `openclaw agent` | Agent 执行 |
+| `backup.ts` | `openclaw backup` | 备份/恢复 |
+| `plugins.ts` | `openclaw plugins install` | 插件管理 |
 
-### 关键 CLI 模块
+### Agent 管理命令
 
-| 文件                    | 大小 | 功能                                      |
-| ----------------------- | ---- | ----------------------------------------- |
-| `config-cli.ts`         | 44KB | 配置管理（set/get/edit/list）             |
-| `plugins-cli.ts`        | 39KB | 插件管理（install/uninstall/update/list） |
-| `memory-cli.ts`         | 30KB | 记忆管理（search/index/status）           |
-| `hooks-cli.ts`          | 25KB | Hook 管理（install/list/test）            |
-| `completion-cli.ts`     | 20KB | Shell 自动补全（bash/zsh/fish）           |
-| `browser-cli-manage.ts` | 17KB | 浏览器自动化管理                          |
-| `devices-cli.ts`        | 15KB | 设备配对管理                              |
-| `models-cli.ts`         | 14KB | 模型管理（list/set）                      |
-| `ports.ts`              | 12KB | 端口管理与冲突检测                        |
-| `security-cli.ts`       | 7KB  | 安全审计 CLI                              |
+| 文件 | 功能 |
+|------|------|
+| `agents.ts` | 主 Agent 命令 |
+| `agents.commands.add.ts` | 添加 Agent |
+| `agents.commands.delete.ts` | 删除 Agent |
+| `agents.commands.list.ts` | 列出 Agent |
+| `agents.commands.bind.ts` | 绑定 Agent |
+| `agents.commands.identity.ts` | 身份管理 |
+| `agents.bindings.ts` | 绑定配置 |
+
+### 认证向导
+
+| 文件 | 功能 |
+|------|------|
+| `auth-choice.ts` | 认证选择入口 |
+| `auth-choice.api-key.ts` | API Key 配置 |
+| `auth-choice.apply.ts` | 应用认证配置 |
+| `auth-choice.apply.oauth.ts` | OAuth 认证 |
+| `auth-choice.apply.api-key-providers.ts` | API Key Provider |
+| `auth-choice.preferred-provider.ts` | 首选 Provider |
+| `auth-choice.model-check.ts` | 模型检查 |
+
+### Onboarding 命令
+
+| 文件 | 功能 |
+|------|------|
+| `onboard-search.ts` | 搜索 Provider |
+| `onboard-model-check.ts` | 模型检测 |
+| `onboard-channel.ts` | 渠道配置 |
 
 ---
 
-## 命令层 — `src/commands/` (295 文件)
+## 3. Progress UI 系统（`progress.ts` — 231L）
 
-业务命令的具体实现，按功能域组织。
-
-### 核心命令分类
+### 3.1 三层进度回退
 
 ```mermaid
-graph LR
-  subgraph "引导与配置"
-    ONBOARD["onboard*<br/>入门向导 (20+ 文件)"]
-    CONFIGURE["configure*<br/>交互式配置 (10+ 文件)"]
-    DOCTOR["doctor*<br/>健康诊断 (40+ 文件)"]
-  end
-
-  subgraph "Agent 管理"
-    AGENTS["agents.*<br/>创建/绑定/删除/识别"]
-    SESSIONS["sessions*<br/>会话管理/清理"]
-    AGENT_CMD["agent.ts<br/>单次 Agent 执行"]
-  end
-
-  subgraph "运维与状态"
-    STATUS["status*<br/>全局状态 (20+ 文件)"]
-    HEALTH["health.ts (28KB)<br/>系统健康检查"]
-    BACKUP["backup*<br/>备份/验证/恢复"]
-    GATEWAY_ST["gateway-status*<br/>网关状态"]
-  end
-
-  subgraph "模型与认证"
-    AUTH_CHOICE["auth-choice*<br/>认证选择 (15+ 文件)"]
-    MODEL_PICKER["model-picker.ts (18KB)<br/>交互式选模型"]
-    SANDBOX["sandbox*<br/>沙箱配置/解释"]
-  end
+flowchart TD
+    CHECK["createCliProgress()"] --> OSC{"支持 OSC?<br/>supportsOscProgress()"}
+    OSC -->|是| OSC_BAR["OSC 终端进度条<br/>（iTerm2/VS Code/...）"]
+    OSC -->|否| SPINNER{"fallback=spinner?"}
+    SPINNER -->|是| CLACK["@clack/prompts spinner<br/>旋转动画"]
+    SPINNER -->|否| LINE{"fallback=line?"}
+    LINE -->|是| TEXT_LINE["文本行进度<br/>label 42%"]
+    LINE -->|否| LOG{"fallback=log?"}
+    LOG -->|是| CONSOLE["控制台日志<br/>（非 TTY 环境）"]
+    LOG -->|否| NOOP["无操作"]
 ```
 
-### Doctor 诊断系统
+### 3.2 ProgressReporter API
 
-`doctor*.ts` 系列文件（40+ 个）实现了全面的系统健康检查：
+```typescript
+type ProgressReporter = {
+  setLabel: (label: string) => void;    // 更新标签
+  setPercent: (percent: number) => void; // 设置百分比 (0-100)
+  tick: (delta?: number) => void;        // 增量进度
+  done: () => void;                      // 完成并清理
+};
+```
 
-- 配置合规性检查（`doctor-config-flow.ts` 65KB）
-- 安全审计（`doctor-security.ts`）
-- 网关/守护进程状态（`doctor-gateway-daemon-flow.ts`）
-- 遗留配置迁移（`doctor-legacy-config.ts` 16KB）
-- 状态完整性校验（`doctor-state-integrity.ts` 27KB）
-- 浏览器环境检查（`doctor-browser.ts`）
-- 记忆搜索验证（`doctor-memory-search.ts`）
+### 3.3 使用模式
+
+```typescript
+// 1. 自动管理模式
+const result = await withProgress(
+  { label: "加载插件...", total: plugins.length },
+  async (p) => {
+    for (const plugin of plugins) {
+      await loadPlugin(plugin);
+      p.tick();
+    }
+  }
+);
+
+// 2. 带总量更新的模式
+await withProgressTotals(
+  { label: "同步中..." },
+  async (update) => {
+    update({ completed: 50, total: 100, label: "同步文件..." });
+  }
+);
+
+// 3. 延迟显示（避免瞬时操作闪烁）
+createCliProgress({ label: "...", delayMs: 200 });
+```
+
+### 3.4 互斥保护
+
+```typescript
+let activeProgress = 0;
+// 同一时刻只允许一个 Progress，后来的自动退化为 noop
+if (activeProgress > 0) return noopReporter;
+```
+
+---
+
+## 4. 终端表格（`src/terminal/table.ts`）
+
+ANSI 安全的表格输出，支持：
+- 自动列宽计算
+- Unicode 字符宽度处理
+- `status --all` 只读/可粘贴模式
+- `status --deep` 探测模式
+
+## 5. 调色板（`src/terminal/palette.ts`）
+
+```typescript
+import { palette } from "../terminal/palette.js";
+palette.primary("主色");    // 品牌色
+palette.success("成功");    // 绿色
+palette.error("错误");      // 红色
+palette.warn("警告");       // 黄色
+palette.muted("次要");      // 灰色
+palette.accent("强调");     // 亮色
+```
+
+> ⚠ **规范**：禁止硬编码 ANSI 颜色代码，必须使用 `palette.ts`。
+
+## 6. Onboarding 向导（`src/wizard/`）
+
+交互式设置流程：
+1. Provider 选择（API Key / OAuth）
+2. 模型检测与验证
+3. 渠道配置（Telegram/Discord/...）
+4. Gateway 启动
+
+## 7. 依赖注入（`createDefaultDeps`）
+
+```typescript
+// src/cli/deps.ts
+type CliDeps = {
+  loadConfig: () => Promise<OpenClawConfig>;
+  resolveConfigPath: () => string;
+  // ... 其他依赖
+};
+// 测试时可注入 mock 依赖
+```
