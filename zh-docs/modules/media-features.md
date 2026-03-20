@@ -1,44 +1,60 @@
-# 模块分析：Media & Features
+# 模块分析：多媒体特性 (Media & Features)
 
-## 多媒体处理 (Media) - `src/media/`
+## 媒体处理 — `src/media/` (41 文件)
 
-Media 模块为 OpenClaw 提供了强大的多媒体文件处理能力，支持图像、音频和文档的深度操作。
+```mermaid
+graph TB
+  subgraph "媒体处理管线"
+    FETCH["fetch.ts (8KB)<br/>远程媒体下载"]
+    INPUT["input-files.ts (11KB)<br/>输入文件处理"]
+    STORE["store.ts (13KB)<br/>媒体存储"]
+    SERVER["server.ts (3KB)<br/>媒体服务器"]
+  end
 
-### 核心功能
+  subgraph "图像处理"
+    IMG_OPS["image-ops.ts (14KB)<br/>Sharp + Sips"]
+    PNG["png-encode.ts<br/>PNG 编码"]
+    BASE64["base64.ts<br/>Base64 编解码"]
+    MIME["mime.ts (4KB)<br/>MIME 识别"]
+  end
 
--   **图像处理 (`image-ops.ts`)**:
-    -   **双后端支持**: 根据运行环境自动切换 `sharp` (高性能 Node.js 库) 或 `sips` (macOS 原生命令)。
-    -   **自动化处理**: 支持自动缩放、格式转换（JPEG/PNG）、EXIF 方向校正以及针对大模型的图像压缩优化。
--   **音视频支持**: 通过 `ffmpeg-exec.ts` 调用 FFmpeg 进行音频转码和处理，常用于语音消息的处理。
--   **文档解析**: `pdf-extract.ts` 支持从 PDF 文件中提取文本内容，供 Agent 阅读。
--   **媒体存储 (`store.ts`)**: 统一管理会话中涉及的多媒体资源，确保文件在多个回合间的一致性。
+  subgraph "音频处理"
+    AUDIO["audio.ts<br/>音频管理"]
+    FFMPEG["ffmpeg-exec.ts<br/>FFmpeg 调用"]
+    TAGS["audio-tags.ts<br/>标签解析"]
+  end
+
+  subgraph "文档处理"
+    PDF["pdf-extract.ts (3KB)<br/>PDF 文本提取"]
+    PARSE["parse.ts (8KB)<br/>通用解析"]
+  end
+
+  FETCH --> INPUT --> STORE --> SERVER
+  INPUT --> IMG_OPS & AUDIO & PDF
+  IMG_OPS --> PNG & MIME
+  AUDIO --> FFMPEG
+```
+
+### 图像处理 (`image-ops.ts` 14KB)
+
+- **Sharp**：Node.js 高性能图像处理（缩放、格式转换、EXIF 清理）
+- **macOS Sips**：平台原生后备方案
+- 自动分辨率优化（适配 LLM 图像输入限制）
+- 安全路径策略（`inbound-path-policy.ts`）
+
+### 媒体存储与服务
+
+- `store.ts`（13KB）：临时文件管理、生命周期控制、自动清理
+- `server.ts`（3KB）：本地 HTTP 媒体服务，供 Agent 和渠道引用
 
 ---
 
-## 图像生成 (Image Generation) - `src/image-generation/`
+## 图像生成 — `src/image-generation/`
 
-该模块允许 Agent 根据文字描述生成图像。
-
-### 设计亮点
-
--   **多模型回退策略 (`runtime.ts`)**: 在生成图像时，可以配置多个候选模型。如果首选模型（如 DALL-E 3）调用失败，系统会自动尝试备选模型，确保生成的可靠性。
--   **提供商模型**: 通过插件系统支持多种图像生成服务。
+多模型图像生成抽象层，支持 DALL-E、Stable Diffusion 等。
 
 ---
 
-## 浏览器自动化 (Browser) - `src/browser/`
+## 浏览器自动化 — `src/browser/`
 
-这是 OpenClaw 最强大的功能之一，提供了一个完整的、可观测的自动化浏览器环境。
-
-### 技术架构
-
--   **深度集成 (CDP)**: 通过 Chrome DevTools Protocol (`cdp.ts`) 实现对浏览器的底层控制，能够捕获精确的页面状态。
--   **自动化引擎**: 结合了 Playwright (`pw-session.ts`)，提供了稳定的点击、输入、导航等高级交互功能。
--   **可观测性**: 支持实时截图、页面快照（Snapshot）以及将复杂网页结构简化为 AI 可理解的提示词。
--   **MCP 集成**: 浏览器能力被封装为 MCP (Model Context Protocol) 工具，使 Agent 能够像使用普通工具一样操作浏览器。
-
----
-
-## 网络搜索 (Web Search) - `src/web-search/`
-
-一个轻量级的搜索模块，为 Agent 提供实时联网搜索能力，支持多种搜索接口。
+Agent 可控制的无头浏览器能力，支持页面导航、截图、内容提取。

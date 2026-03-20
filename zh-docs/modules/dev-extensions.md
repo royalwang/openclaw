@@ -1,50 +1,128 @@
-# 二次开发与扩展点指北 (Secondary Development)
+# 二次开发与扩展点指北 (Developer Extension Guide)
 
-OpenClaw 提供了强大的内部防腐层与隔离沙箱架构，几乎所有的核心能力（包含所有内置的通讯渠道与模型提供商）都是通过标准化的 SDK 注入的。本文档为希望进行二次开发的工程师提供基础架构扩展指南。
+OpenClaw 通过标准化 SDK 提供完善的插件开发体系。本文档面向希望进行二次开发的工程师。
 
-## 1. 核心扩展生态位
+## 1. 核心扩展类型
 
-OpenClaw 主要通过提供 `src/plugin-sdk/core.ts` 导出的高阶类型约束来编写以下几类外挂模块：
+```mermaid
+graph LR
+  SDK["plugin-sdk/core.ts<br/>类型契约"]
 
--   **模型提供商 (Provider Plugins)**: 对应实现 `ProviderPlugin` 接口。
--   **通讯渠道代理 (Channel Plugins)**: 对应实现 `ChannelPlugin` 接口。
--   **代理挂载技能 (Agent Skills)**: 对应实现 `AgentSkill` / 工具工厂机制。
--   **多模态或领域组件**: 如视觉理解扩展 (`MediaUnderstandingProviderPlugin`) 与语音生成抽象 (`SpeechProviderPlugin`)。
--   **系统钩子 (Lifecycle Hooks)**: 全局系统生命周期监听拦截网。
+  SDK --> PP["Provider Plugin<br/>模型提供商"]
+  SDK --> CP["Channel Plugin<br/>通讯渠道"]
+  SDK --> SK["Agent Skill<br/>代理技能"]
+  SDK --> HP["Hook Plugin<br/>生命周期钩子"]
+  SDK --> MP["Media Plugin<br/>多模态组件"]
 
-## 2. 深入探究：Provider Plugin
+  PP --> PP_I["ProviderPlugin 接口"]
+  CP --> CP_I["ChannelPlugin 接口"]
+  SK --> SK_I["OpenClawPluginToolFactory"]
+  HP --> HP_I["Lifecycle Hooks"]
+  MP --> MP_I["MediaUnderstandingProviderPlugin<br/>SpeechProviderPlugin"]
+```
 
-在 `src/plugins/types.ts` 定义的 `ProviderPlugin` 是 OpenClaw 极其庞大且能力强大的扩展接口。一个完备的 Provider 可以渗透影响系统的方方面面：
+## 2. Provider Plugin 开发
 
--   **交互向导设计 (`auth` 与 `wizard`)**:
-    -   可定义极度友好的终端命令行提示（Prompter），支持 OAuth2 鉴权授权跳转，或是传统的受掩码保护的 API Key 录入（`ProviderAuthKind`）。
--   **模型目录管理 (`catalog` / `augmentModelCatalog`)**:
-    -   能够拦截 `models list` 指令，动态地从云端 API 获取该账户当前可享用的最新模型权限树，并自动合并注册到系统内。
--   **运行时挂载与劫持 (`prepareExtraParams`, `wrapStreamFn`)**:
-    -   当模型生成实际调用即将发生前，通过拦截并改写传向底层的配置项，解决各家大模型关于 API 的魔改（如混杂在 Headers 内的强制前缀标识、特殊参数格式）、增加特定鉴权，甚至接管处理 Token 消耗统计抛出。
--   **特定高级策略支持 (`isBinaryThinking`, `isCacheTtlEligible`)**:
-    -   无需修改系统底座，仅通过暴露钩子接口向下层宣布该特定的模型提供商是否支持 Prompt Cache 技术，或是开启高级推理行为开关 (Reasoning Toggle)。
+`ProviderPlugin`（定义于 `src/plugins/types.ts` 61KB）是最复杂的扩展接口。
 
-## 3. 深入探究：Agent Skill (代理工具/动作)
+### 核心能力
 
-当赋予代理额外的本地执行资源与远程跨域访问能力，便形成了代理工具。
+| 能力       | 接口方法                                 | 说明                  |
+| ---------- | ---------------------------------------- | --------------------- |
+| 认证向导   | `auth`, `wizard`                         | OAuth2 / API Key 录入 |
+| 模型目录   | `catalog`, `augmentModelCatalog`         | 动态模型发现与注册    |
+| 运行时劫持 | `prepareExtraParams`, `wrapStreamFn`     | 请求拦截、参数注入    |
+| 特性声明   | `isBinaryThinking`, `isCacheTtlEligible` | 推理/缓存能力标记     |
+| Token 统计 | 使用量覆写                               | 自定义计费逻辑        |
 
--   **沙盘工具工厂 (`OpenClawPluginToolFactory`)**: 
-    -   由插件导出一个工厂闭包。执行时接收并解析系统提供的包含了工作上下文配置、发信人权限校验令牌（如区分超级管理员与普通用户），以及当前沙箱隔离状态的数据模型 `OpenClawPluginToolContext`。
-    -   该工厂向上层透明返回一个兼容 OpenAI 乃至广泛流派的 JSON Schema 抽象动作指令集（`AnyAgentTool`）。
--   通过底座架构内置的并发队列控制拦截器，严防多工具循环调用发生死锁。
+### 开发示例骨架
 
-## 4. 全局拦截 Hook 体系
+```typescript
+// extensions/my-provider/src/index.ts
+import { definePluginEntry } from "openclaw/plugin-sdk/core";
 
-伴随 `src/hooks/` 和通道抽象共同构建的网络。
+export default definePluginEntry({
+  name: "my-provider",
+  type: "provider",
 
--   **上下文数据篡改栈**: 允许在进图 LLM 会话上下文之前，以中间件的形式横插一刀，修改 System Prompt 甚至是利用额外的 RAG 策略去召回外部数据源充实用户消息的前置关联文本。
--   **事件总线挂载**: 实现对网络链接断开、渠道鉴权丢失等特殊生命周期事件的捕获响应。
+  auth: {
+    kind: "api-key", // 或 "oauth2"
+    envVar: "MY_PROVIDER_KEY", // 环境变量名
+  },
 
-## 5. 开发实践
+  catalog: async (ctx) => {
+    // 从远程 API 获取可用模型列表
+    return [{ id: "my-model-v1", name: "My Model" }];
+  },
 
-建议将所有的独立领域功能包存放在系统的 `extensions/` 目录下（配合工程现有的 Mono-repo 进行包管理）：
-  
-1.  在根内创建 `extensions/your-plugin` 包路径，并在其 `package.json` 内配置特定于所需要的依赖。
-2.  严格通过 `@openclaw/plugin-sdk/core` 中引入诸如 `definePluginEntry` 或 `defineChannelPluginEntry` 的安全出口装箱功能闭包，确保版本升级强类型安全。
-3.  通过 `openclaw.json` (或系统指定运行时注入配置) 在 `plugins` 下拉起对应工作区注册即可。
+  prepareExtraParams: (params, ctx) => {
+    // 在 LLM 调用前注入自定义参数
+    params.headers["X-Custom-Auth"] = ctx.apiKey;
+    return params;
+  },
+});
+```
+
+## 3. Channel Plugin 开发
+
+通讯渠道插件负责消息收发。
+
+### 接口要求
+
+| 方法               | 必须 | 说明                    |
+| ------------------ | ---- | ----------------------- |
+| `start()`          | ✅   | 启动轮询/WebSocket 监听 |
+| `stop()`           | ✅   | 停止监听                |
+| `sendMessage()`    | ✅   | 发送文本/媒体消息       |
+| `sendReaction()`   | 可选 | 发送 emoji 反应         |
+| `setTyping()`      | 可选 | 设置打字状态            |
+| `getAccountInfo()` | 可选 | 获取账户信息            |
+
+## 4. Agent Skill 开发
+
+通过 `OpenClawPluginToolFactory` 工厂模式创建工具：
+
+```typescript
+export const myTool: OpenClawPluginToolFactory = (ctx) => ({
+  name: "my_tool",
+  description: "执行自定义操作",
+  parameters: {
+    type: "object",
+    properties: {
+      input: { type: "string", description: "输入参数" },
+    },
+    required: ["input"],
+  },
+  execute: async ({ input }) => {
+    // 访问 ctx.workspaceDir, ctx.senderRole 等上下文
+    return { result: `处理完成: ${input}` };
+  },
+});
+```
+
+## 5. Hook 开发
+
+钩子允许在系统生命周期的关键节点注入自定义逻辑：
+
+```typescript
+export default definePluginEntry({
+  hooks: {
+    "before-agent-start": async (event) => {
+      // 修改 System Prompt
+      event.systemPrompt += "\n\n自定义指令...";
+    },
+    "after-tool-call": async (event) => {
+      // 记录工具调用日志
+      console.log(`Tool ${event.toolName} completed`);
+    },
+  },
+});
+```
+
+## 6. 开发实践
+
+1. 在 `extensions/your-plugin` 创建包目录
+2. `package.json` 中声明运行时依赖（`dependencies`），将 `openclaw` 放入 `devDependencies`
+3. 通过 `definePluginEntry` 或 `defineChannelPluginEntry` 安全导出
+4. 在 `openclaw.json` 的 `plugins` 字段注册
+5. 运行 `openclaw plugins install ./extensions/your-plugin` 安装

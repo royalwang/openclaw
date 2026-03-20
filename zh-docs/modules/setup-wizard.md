@@ -1,20 +1,50 @@
-# 模块分析：配置向导与交互逻辑 (Setup & Wizard)
+# 模块分析：配置向导 (Setup & Wizard)
 
-## 配置向导 (Wizard) - `src/wizard/`
+## 入门向导 — `src/commands/onboard*` (25+ 文件)
 
-`wizard` 模块主要用于在命令行中为用户提供开箱即用、友好的首次运行和系统配置体验，与日常的高频操作无缝集成。
+```mermaid
+flowchart TD
+    START["openclaw onboard"] --> MODE{"交互模式?"}
+    MODE -->|交互式| INTER["onboard-interactive.ts"]
+    MODE -->|非交互| NON_INTER["onboard-non-interactive.ts"]
 
-### 核心功能
+    INTER --> AUTH["onboard-auth*<br/>选择认证方式"]
+    AUTH --> PROVIDER["Provider 选择<br/>OpenAI/Anthropic/Gemini/..."]
+    PROVIDER --> KEY["API Key 输入<br/>或 OAuth 跳转"]
+    KEY --> CHANNEL["onboard-channels.ts (28KB)<br/>渠道配置"]
+    CHANNEL --> SKILLS["onboard-skills.ts (7KB)<br/>技能选择"]
+    SKILLS --> CONFIG["onboard-config.ts<br/>生成 openclaw.json"]
+    CONFIG --> GATEWAY["启动 Gateway"]
 
--   **交互式表单提示 (`clack-prompter.ts`, `prompts.ts`)**:
-    -   封装第三方命令行交互库（如 `@clack/prompts`），提供高度一致、美观且响应式的 CLI 表单交互界面。
-    -   支持复杂的步骤状态机跳转（如：当用户勾选特定的大语言模型提供商后，能够动态追问特定格式的 API 接入密钥）。
--   **全局引导与初始化 (`setup.ts`, `setup.finalize.ts`)**:
-    -   统筹整个 `openclaw onboard`（开箱引导）和 `openclaw setup` 流程。指引用户完成从网关网络端点暴露、渠道参数填充到代理初始能力挂载的全闭环。
-    -   在此过程中结合 `setup.gateway-config.ts` 高效安全地读写本地环境变量和全局的 `openclaw.json` 配置文档。
--   **安全输入挂载 (`setup.secret-input.ts`)**:
-    -   深度定制命令行接口的密码输入掩码显示逻辑，进行前后缀预截断安全过滤，防止在控制面板或系统日志中被录屏程序捕捉。
+    NON_INTER --> AUTO["自动检测环境<br/>secret-input-mode ref"]
+    AUTO --> CONFIG
+```
 
-## 交互载体逻辑 (Interactive) - `src/interactive/`
+### 核心组件
 
-处理诸如特定动作卡片的 Payload 序列化，配合交互式消息格式为不同渠道的消息模板构建提供支撑平台。
+| 文件                  | 大小 | 功能              |
+| --------------------- | ---- | ----------------- |
+| `onboard-channels.ts` | 28KB | 渠道配置引导      |
+| `onboard-helpers.ts`  | 15KB | 向导辅助工具      |
+| `onboard-custom.ts`   | 24KB | 自定义配置        |
+| `onboard-search.ts`   | 9KB  | 搜索可用 Provider |
+| `onboard-remote.ts`   | 8KB  | 远程配置          |
+| `onboard-skills.ts`   | 7KB  | 技能选择          |
+
+---
+
+## 交互式配置 — `src/commands/configure*`
+
+| 文件                              | 功能               |
+| --------------------------------- | ------------------ |
+| `configure.wizard.ts` (21KB)      | 完整交互式配置向导 |
+| `configure.gateway.ts` (10KB)     | Gateway 配置       |
+| `configure.gateway-auth.ts` (5KB) | 认证配置           |
+| `configure.daemon.ts` (5KB)       | Daemon 配置        |
+| `configure.channels.ts`           | 渠道配置           |
+
+---
+
+## Setup 初始化 — `src/wizard/`
+
+低层初始化逻辑，处理首次运行时的环境检测和基础配置生成。

@@ -1,35 +1,69 @@
-# 模块分析：辅助系统与边缘能力 (Auxiliary & Edge Systems)
+# 模块分析：辅助系统 (Auxiliary Systems)
 
-在 OpenClaw 的通信与代理中枢外围，还围绕着众多精密的辅助系统模块。本文档囊括了这些重要支撑性子系统，补齐了整个 `src/` 架构拼图。
+## 日志系统 — `src/logging/`, `src/logger.ts`
 
-## 可观测性与日志 (Logging) - `src/logging/`
+```mermaid
+graph LR
+  LOG["logger.ts (2KB)<br/>日志入口"] --> LOGGING["logging.ts<br/>格式化输出"]
+  LOGGING --> REDACT["安全脱敏<br/>API Key/Token 掩码"]
+  LOGGING --> LEVEL["日志级别<br/>debug/info/warn/error"]
+  LOGGING --> WS_LOG["gateway/ws-log.ts (13KB)<br/>WebSocket 日志流"]
+```
 
-为系统的监控、纠错提供了健壮的底层保障。
+### 安全脱敏
 
--   **诊断与分级输出 (`diagnostic.ts`, `levels.ts`)**: 
-    - 构建了高低多层级的调试、提示、警告与错误捕获通道。包括控制台着色输出与持久化文件级别的结构化 JSON 滚动写入（支持文件大小切割限制）。
--   **安全自动脱敏 (`redact.ts`)**: 
-    - 针对日志污染问题，在内容被刷写至设备文件或终端前会自动拦截并遮盖如 Bearer Token、密钥以及特权散列值等私密内容。
--   **全局输出接管 (`console.ts`, `console-capture.ts`)**: 
-    - 强制拦截挂载在全局 `console` 上的操作，严防底层引用的三方依赖产生异常输出破坏系统的 TUI 界面渲染隔离。
+- 自动检测并掩码 API Key、Token、密码
+- 配置快照脱敏（`config/redact-snapshot.ts` 22KB）
+- WebSocket 日志流传输时实时脱敏
 
-## 语音合成 (TTS) - `src/tts/`
+---
 
-文本到语音引擎层（Text-to-Speech）。
+## TTS 语音合成 — `src/tts/`
 
--   **提供商解耦抽象 (`provider-registry.ts`)**: 定义了标准化的语音合成接口与配置注册入口。
--   **多后端对接 (`providers/`)**: 支持将 Agent 产出的自然文本内容，通过内置的提供商（如无需配置的 Edge TTS 等）流式渲染为音频二进制片段（以供渠道下发至 IM 软件作为语音消息）。
+文字转语音管线：
 
-## 链接增强理解 - `src/link-understanding/`
+- 多供应商支持
+- 流式合成与分段下发
+- 音频格式自适应
+- 配置化声音选择
 
-作为浏览器与代理中间的快捷桥梁。
+---
 
--   当用户向多媒体信道丢入一条普通的网址链接时，该模块先行动作，尝试嗅探页面的默认元信息或者利用无头浏览器获取快照描述，将其转化为 Agent 认知可理解的模型输入提示词前缀。
+## 测试工具库 — `src/test-helpers/`, `src/test-utils/`
 
-## 兼容层与测试底座 - `src/compat/`, `src/test-helpers/`, `src/test-utils/`
+为系统级测试提供基础设施：
 
--   **向下兼容垫片 (`compat/`)**: 针对于某些三方包特定的运行版本差异（或 Node.js 环境变化）提供的包裹接口层。
--   **测试沙箱套件 (`test-helpers/`, `test-utils/`)**:
-    -   提供了用于完全脱机测试的大规模仿真组件。例如隔离的工作区目录构建 (`workspace.ts`)、脱机内存文件操作 (`temp-dir.ts`)。
-    -   以及为诸如超时重试、状态状态机等复杂的并发时序类模块构建了 100% 确定性的执行环境，确保测试可复现。
--   **国际化预留 (`i18n/`)**: 简单的语言键值注册表辅助类，负责统一系统的多语言兜底字符串或报错反馈收集。
+- Mock 工厂
+- 测试用配置生成
+- 临时目录管理
+- 断言辅助
+
+---
+
+## 国际化 — `src/i18n/`
+
+多语言支持框架，用于 CLI 输出和用户面向的消息。
+
+---
+
+## 兼容层 — `src/compat/`
+
+处理跨版本和跨平台兼容性，确保在不同运行时（Node/Bun）和操作系统间的行为一致。
+
+---
+
+## 配对系统 — `src/pairing/`
+
+设备配对机制，支持移动端（iOS/Android）节点与 Gateway 的安全配对和认证。
+
+---
+
+## Web 搜索 — `src/web-search/`
+
+Agent 可使用的 Web 搜索能力，支持多搜索引擎后端。
+
+---
+
+## 终端处理 — `src/terminal/`
+
+终端相关的底层操作：光标控制、颜色渲染、终端尺寸检测等。

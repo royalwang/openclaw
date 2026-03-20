@@ -1,23 +1,90 @@
 # 模块分析：Auto-Reply & Dispatch
 
-## 自动回复与分发 (Auto-Reply) - `src/auto-reply/`
+## 自动回复引擎 — `src/auto-reply/` (67 文件)
 
-`auto-reply` 是 OpenClaw 处理对话流入、状态机流转、指令解析及模型回复生成的核心枢纽模块。它负责连接渠道层（Channels）和代理逻辑层（Agents）。
+自动回复是消息从渠道进入到 Agent 执行的核心调度层，实现了状态机驱动的消息分发。
 
-### 核心功能
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: 等待消息
+    Idle --> InboundReceived: 收到消息
+    InboundReceived --> CommandDetect: 指令检测
+    CommandDetect --> CommandExec: 匹配到指令
+    CommandDetect --> TriggerMatch: 非指令消息
+    TriggerMatch --> Debounce: 触发器匹配成功
+    Debounce --> AgentDispatch: 去抖完成
+    AgentDispatch --> Processing: Agent 执行中
+    Processing --> StreamReply: 流式回复
+    StreamReply --> HeartbeatReply: 心跳回复
+    HeartbeatReply --> Idle: 回复完成
+    CommandExec --> Idle: 指令执行完毕
+```
 
--   **状态与调度 (`status.ts`, `dispatch.ts`)**:
-    -   维护对话的生命周期状态（例如：等待中、思考中、回复中）。
-    -   管理消息队列，处理防抖（Debounce）和并发限制，确保消息按序严格处理。
--   **指令与触发器 (`reply.directive.*`, `reply.triggers.*`)**:
-    -   提供细粒度的回复控制策略（Directives），如内联推理（Inline Reasoning）、模糊匹配（Fuzzy Selection）和冗长级别控制（Verbose Level）。
-    -   通过触发器（Triggers）系统，智能处理不同类型的入站媒体（如将图片存入沙盒）、动态过滤系统提示词，以及向特定 Agent 路由请求。
--   **心跳与思考状态 (`heartbeat.ts`, `thinking.ts`)**:
-    -   在 LLM 处理耗时任务时，向用户发送心跳包（如 "正在输入..." 或周期性状态更新）。
-    -   暴露思考过程（Thinking），支持在界面上实时流式输出 Agent 的推理过程。
--   **模型与介质 (`model.ts`, `media-note.ts`)**:
-    -   封装底层模型调用，处理模型的流式输出（Block Streaming）和格式化。
-    -   对媒体附件（音频、图像、文件）进行标准化处理，以便模型理解。
--   **命令鉴权与注册 (`command-auth.ts`, `commands-registry.ts`)**:
-    -   将自然语言或斜杠命令映射为具体的系统操作。
-    -   提供细粒度的权限校验，确保只有授权用户或应用所有者可以执行特定命令。
+### 核心组件
+
+| 文件                        | 大小 | 功能                                      |
+| --------------------------- | ---- | ----------------------------------------- |
+| `status.ts`                 | 28KB | 状态机总控，管理全局回复状态              |
+| `reply.ts`                  | 入口 | 回复分发路由                              |
+| `chunk.ts`                  | 14KB | 回复文本智能分块（按段落/代码块边界切分） |
+| `command-auth.ts`           | 12KB | 指令权限校验                              |
+| `commands-registry.ts`      | 15KB | 指令注册中心                              |
+| `commands-registry.data.ts` | 23KB | 内置指令定义数据                          |
+| `envelope.ts`               | 8KB  | 消息信封解析/构造                         |
+| `dispatch.ts`               | 3KB  | 消息分发路由                              |
+| `inbound-debounce.ts`       | 3KB  | 入站消息去抖                              |
+| `templating.ts`             | 8KB  | 回复模板引擎                              |
+| `thinking.ts`               | 3KB  | 推理展示控制                              |
+| `skill-commands.ts`         | 6KB  | 技能指令处理                              |
+
+### 指令系统
+
+```mermaid
+flowchart TD
+    MSG["收到消息"] --> DETECT["command-detection.ts<br/>指令检测"]
+    DETECT --> AUTH["command-auth.ts (12KB)<br/>权限校验：Owner/Admin/User"]
+    AUTH --> REGISTRY["commands-registry.ts (15KB)<br/>查找指令处理器"]
+    REGISTRY --> EXEC["执行指令"]
+
+    subgraph "内置指令 (commands-registry.data.ts)"
+        STOP["/stop — 终止当前任务"]
+        MODEL["/model — 切换模型"]
+        THINK["/think — 切换推理模式"]
+        VERBOSE["/verbose — 日志级别"]
+        RESET["/reset — 重置会话"]
+        STATUS_CMD["/status — 查看状态"]
+        HELP["/help — 帮助"]
+    end
+```
+
+### 回复分发流
+
+```mermaid
+flowchart LR
+    AGENT["Agent 输出"] --> CHUNK["chunk.ts (14KB)<br/>智能分块"]
+    CHUNK --> TEMPLATE["templating.ts (8KB)<br/>模板渲染"]
+    TEMPLATE --> STREAM["流式发送<br/>按段落/代码块边界"]
+    STREAM --> TYPING["typing 状态管理"]
+    STREAM --> REACTIONS["状态反应<br/>👀→✅/❌"]
+
+    AGENT --> HEARTBEAT["heartbeat.ts (5KB)<br/>心跳回复"]
+    HEARTBEAT --> SCHEDULE["定时检查<br/>长任务心跳反馈"]
+```
+
+### 消息去抖
+
+`inbound-debounce.ts` 实现入站消息去抖，防止用户快速连发多条消息触发多次 Agent 执行。策略包括：
+
+- 时间窗口合并
+- 相同会话键去重
+- 配置化去抖间隔
+
+### 回复智能分块
+
+`chunk.ts`（14KB）实现了基于语义边界的文本分块：
+
+- 优先在段落分隔处切分
+- 尊重 Markdown 代码块边界（不在代码块中间切断）
+- 缩进级别保持
+- 列表项不拆分
+- 长单行代码块特殊处理

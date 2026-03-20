@@ -1,27 +1,58 @@
-# 模块分析：扩展生态 (Extensions Ecosystem)
+# 模块分析：扩展生态概览 (Extensions Ecosystem)
 
-OpenClaw 的强大之处在于其极其丰富的扩展（Extensions）系统。这些扩展通常位于项目根目录的 `extensions/` 文件夹下。
+## 概览 — `extensions/` 目录
 
-## 扩展类型
+OpenClaw 的 `extensions/` 目录采用 Monorepo workspace 模式组织所有插件。
 
-### 1. 通讯渠道 (Channels)
-负责与各种社交软件或通讯协议对接。
--   **示例**: `extensions/telegram`, `extensions/discord`, `extensions/slack`, `extensions/msteams`, `extensions/feishu` 等。
--   **功能**: 消息收发、媒体分块、按钮交互、Webhook 处理。
+```mermaid
+graph TB
+  subgraph "渠道插件 (Channel)"
+    MSTEAMS["msteams<br/>Microsoft Teams"]
+    MATRIX["matrix<br/>Matrix 协议"]
+    ZALO["zalo<br/>Zalo OA"]
+    ZALOUSER["zalouser<br/>Zalo 用户"]
+    IRC["irc<br/>IRC 协议"]
+    VOICE["voice-call<br/>语音通话"]
+    GOOGLECHAT["googlechat<br/>Google Chat"]
+  end
 
-### 2. AI 模型提供商 (Providers)
-将不同厂商的 LLM 或工具集成到 OpenClaw。
--   **示例**: `extensions/openai`, `extensions/anthropic`, `extensions/google`, `extensions/ollama` (本地模型), `extensions/mistral` 等。
--   **功能**: 统一的 Chat Completion 接口、Function Calling 适配、Token 计数。
+  subgraph "供应商插件 (Provider)"
+    PROV["各 AI 供应商<br/>通过 plugin-sdk 接入"]
+  end
 
-### 3. 工具与技能 (Skills)
-为 Agent 提供具体的功能。
--   **示例**: `extensions/browser` (浏览器操作), `extensions/brave` (搜索), `extensions/github` (代码库操作)。
--   **功能**: 定义工具 Schema 并执行具体逻辑。
+  subgraph "技能插件 (Skill)"
+    SKILL["领域技能包<br/>通过 Tool Factory 注册"]
+  end
 
-### 4. 存储与增强 (Memory & Knowledge)
--   **示例**: `extensions/memory-lancedb` (使用 Vector DB 加强记忆)。
+  subgraph "存储插件 (Storage)"
+    STORAGE["自定义存储后端<br/>会话/记忆持久化"]
+  end
+```
 
-## 扩展包结构
+### 插件目录结构
 
-每个扩展通常是一个独立的 npm 包 (Workspace Package)，包含自己的 `package.json`、`index.ts`（入口点）和 `src/` 目录。它们通过 `openclaw/plugin-sdk` 与核心层通信，确保了代码的解耦和安全性。
+每个插件遵循标准结构：
+
+```
+extensions/my-plugin/
+├── package.json          # 声明依赖（不使用 workspace:*）
+├── src/
+│   ├── index.ts          # 插件入口（definePluginEntry）
+│   ├── channel.ts        # 渠道实现（如有）
+│   └── ...
+├── tsconfig.json
+└── README.md
+```
+
+### 依赖管理原则
+
+- 运行时依赖 → `dependencies`（`npm install --omit=dev` 安装）
+- `openclaw` → `devDependencies` 或 `peerDependencies`（运行时通过 jiti 别名解析）
+- **禁止** `workspace:*` 出现在 `dependencies` 中
+
+### 内置渠道
+
+核心代码中还包含以下内置渠道实现：
+
+- `src/` 内置：Telegram, Discord, Slack, Signal, iMessage, WhatsApp, Web
+- `extensions/` 插件：MSTeams, Matrix, Zalo, IRC, Google Chat, Voice Call

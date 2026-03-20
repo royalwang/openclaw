@@ -1,21 +1,52 @@
-# 模块分析：Sessions & Secrets
+# 模块分析：会话与凭据 (Sessions & Secrets)
 
-## 会话与凭据管理
+## 会话管理 — `src/sessions/` (13 文件)
 
-这两个模块（`src/sessions/` 和 `src/secrets/`/`src/providers/`）协同工作，为 OpenClaw 提供了多租户环境下的状态隔离、上下文锁定与核心安全敏感信息管理。
+```mermaid
+flowchart LR
+    MSG["入站消息"] --> RESOLVE["session-id-resolution.ts<br/>会话 ID 解析"]
+    RESOLVE --> KEY["session-key-utils.ts (3KB)<br/>会话键工具"]
+    KEY --> STORE["会话存储"]
 
-### 会话管理 (Sessions)
+    subgraph "会话覆盖"
+        MODEL_OV["model-overrides.ts (3KB)<br/>模型覆盖"]
+        LEVEL_OV["level-overrides.ts<br/>级别覆盖"]
+        SEND_POL["send-policy.ts (3KB)<br/>发送策略"]
+    end
 
--   **会话解析与生命周期 (`session-id-resolution.ts`, `session-key-utils.ts`)**:
-    -   提供跨平台、多渠道的统一用户身份标识解析机制，打通不同社交通讯协议的独特 ID 格式，实现标准化的内部 Session ID 分配。
--   **模型与级别覆盖 (`model-overrides.ts`, `level-overrides.ts`)**:
-    -   允许在每个特定的交互 Session 中动态覆盖系统级别的 LLM 默认大模型及参数行为，支持面向不同群组/私聊空间的独立定制策略。
--   **发送策略防刷屏 (`send-policy.ts`)**:
-    -   在复杂的渠道对话中精准控制重试容错与高频阻断，定制特定的消息发送频率合并规则，防止 Agent 在循环故障中对群组造成打扰。
+    STORE --> MODEL_OV & LEVEL_OV & SEND_POL
+```
 
-### 提供商扩展与凭据 (Providers & Secrets)
+### 核心功能
 
--   **提供商联合认证 (Providers)**:
-    -   针对多种垂直模型与代码助手服务集成（包含 GitHub Copilot Auth 抓取、Google API 以及部分自定义协议像 Kilocode、Qwen Portal），提供统一标准的 OAuth 或鉴权接口对接能力封装。
--   **核心凭管理与隔离**:
-    -   配合系统的运行时沙箱隔离，保障所有的连接 Key 注入安全，规范在持久化或远程调用传递链中杜绝明文硬编码输出。
+| 文件                       | 功能                                   |
+| -------------------------- | -------------------------------------- |
+| `session-id-resolution.ts` | 多层会话 ID 解析（渠道 → 路由 → 内部） |
+| `session-key-utils.ts`     | 会话键计算与缓存                       |
+| `model-overrides.ts`       | 系统级模型参数重写（温度、Top-P 等）   |
+| `send-policy.ts`           | 消息发送策略（限速、去重）             |
+| `input-provenance.ts`      | 输入来源追踪                           |
+| `transcript-events.ts`     | 会话记录事件                           |
+
+---
+
+## 凭据管理 — `src/secrets/`
+
+安全存储和管理 API 密钥、Token 等敏感信息：
+
+- 加密存储
+- 环境变量引用（`${SECRET_REF}`）
+- 运行时安全注入
+- 审计日志
+
+---
+
+## Gateway 会话工具
+
+`src/gateway/session-utils.ts`（32KB）是会话管理的重量级实现：
+
+- 会话 CRUD
+- 历史记录管理
+- 会话状态持久化
+- 会话重置与清理（`session-reset-service.ts`）
+- 配置实时修改（`sessions-patch.ts` 15KB）
