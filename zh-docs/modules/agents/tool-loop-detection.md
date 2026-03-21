@@ -4,23 +4,23 @@
 
 ## 1. 检测器类型
 
-| 检测器 | Kind | 检测目标 |
-|--------|------|---------|
-| 泛型重复 | `generic_repeat` | 相同工具 + 相同参数的重复调用 |
+| 检测器         | Kind                     | 检测目标                                      |
+| -------------- | ------------------------ | --------------------------------------------- |
+| 泛型重复       | `generic_repeat`         | 相同工具 + 相同参数的重复调用                 |
 | 已知轮询无进展 | `known_poll_no_progress` | command_status/process(poll/log) 的无结果变化 |
-| 全局断路器 | `global_circuit_breaker` | 任何工具的无进展重复达到最高阈值 |
-| 乒乓模式 | `ping_pong` | 两组工具调用交替执行无进展 |
+| 全局断路器     | `global_circuit_breaker` | 任何工具的无进展重复达到最高阈值              |
+| 乒乓模式       | `ping_pong`              | 两组工具调用交替执行无进展                    |
 
 ---
 
 ## 2. 阈值配置
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `historySize` | 30 | 滑动窗口大小 |
-| `warningThreshold` | 10 | 警告级别触发 |
-| `criticalThreshold` | 20 | 严重级别触发 |
-| `globalCircuitBreakerThreshold` | 30 | 断路器触发 |
+| 参数                            | 默认值 | 说明         |
+| ------------------------------- | ------ | ------------ |
+| `historySize`                   | 30     | 滑动窗口大小 |
+| `warningThreshold`              | 10     | 警告级别触发 |
+| `criticalThreshold`             | 20     | 严重级别触发 |
+| `globalCircuitBreakerThreshold` | 30     | 断路器触发   |
 
 ### 安全保证
 
@@ -43,7 +43,7 @@ if (globalCircuitBreakerThreshold <= criticalThreshold) {
 ```typescript
 hashToolCall(toolName, params):
   → "toolName:" + SHA256(stableStringify(params))
-  
+
 stableStringify(value):
   → 对象键排序: Object.keys(obj).toSorted()
   → 递归序列化
@@ -56,7 +56,7 @@ stableStringify(value):
 hashToolOutcome(toolName, params, result, error):
   → error 时: "error:" + SHA256(errorMessage)
   → result 时: SHA256({details, text})
-  
+
 // 特殊: process(poll/log) 工具
 //   → 提取 status, exitCode, exitSignal, aggregated, text
 //   → 忽略时间戳等变化字段
@@ -71,24 +71,24 @@ flowchart TD
     INPUT["detectToolCallLoop()"] --> ENABLED{"enabled?"}
     ENABLED -->|否| OK1["stuck: false"]
     ENABLED -->|是| STREAK["计算 noProgress streak"]
-    
+
     STREAK --> GLOBAL{"streak >= 30?<br/>(globalCircuitBreaker)"}
     GLOBAL -->|是| CRITICAL1["🔴 CRITICAL<br/>global_circuit_breaker<br/>阻塞执行"]
-    
+
     GLOBAL -->|否| IS_POLL{"已知轮询工具?"}
     IS_POLL -->|是| POLL_CRIT{"streak >= 20?"}
     POLL_CRIT -->|是| CRITICAL2["🔴 CRITICAL<br/>known_poll_no_progress<br/>阻塞执行"]
     POLL_CRIT -->|否| POLL_WARN{"streak >= 10?"}
     POLL_WARN -->|是| WARN1["🟡 WARNING<br/>known_poll_no_progress"]
-    
+
     IS_POLL -->|否| PP_CHECK["检查 ping-pong"]
     POLL_WARN -->|否| PP_CHECK
-    
+
     PP_CHECK --> PP_CRIT{"ping-pong >= 20<br/>+ 无进展证据?"}
     PP_CRIT -->|是| CRITICAL3["🔴 CRITICAL<br/>ping_pong<br/>阻塞执行"]
     PP_CRIT -->|否| PP_WARN{"ping-pong >= 10?"}
     PP_WARN -->|是| WARN2["🟡 WARNING<br/>ping_pong"]
-    
+
     PP_WARN -->|否| GENERIC{"generic 重复 >= 10?<br/>(非轮询工具)"}
     GENERIC -->|是| WARN3["🟡 WARNING<br/>generic_repeat"]
     GENERIC -->|否| OK2["stuck: false"]
@@ -121,11 +121,11 @@ canonicalPairKey(signatureA, signatureB):
 
 ## 6. 已知轮询工具
 
-| 工具名 | 条件 | 说明 |
-|--------|------|------|
-| `command_status` | 始终 | 命令状态查询 |
-| `process` | action=poll | 进程轮询 |
-| `process` | action=log | 进程日志查询 |
+| 工具名           | 条件        | 说明         |
+| ---------------- | ----------- | ------------ |
+| `command_status` | 始终        | 命令状态查询 |
+| `process`        | action=poll | 进程轮询     |
+| `process`        | action=log  | 进程日志查询 |
 
 轮询工具使用更严格的**无进展**检测：不仅检查参数相同，还检查返回结果的关键字段（status, exitCode, totalLines）是否变化。
 

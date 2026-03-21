@@ -39,11 +39,11 @@ flowchart TD
     INPUT["resolveSessionAgentIds()"] --> EXPLICIT{"显式 agentId?"}
     EXPLICIT -->|有| USE_EXPLICIT["sessionAgentId = agentId"]
     EXPLICIT -->|无| SESSION_KEY{"sessionKey 存在?"}
-    
+
     SESSION_KEY -->|有| PARSE["parseAgentSessionKey()<br/>提取 agentId"]
     PARSE -->|有 agentId| USE_PARSED["sessionAgentId = parsed"]
     PARSE -->|无| USE_DEFAULT["sessionAgentId = defaultAgentId"]
-    
+
     SESSION_KEY -->|无| USE_DEFAULT
 ```
 

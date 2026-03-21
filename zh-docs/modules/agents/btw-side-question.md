@@ -14,21 +14,21 @@
 flowchart TD
     BTW["/btw 问题"] --> RESOLVE_SESSION["获取会话转录路径"]
     RESOLVE_SESSION --> SNAPSHOT{"有活跃运行快照?<br/>getActiveEmbeddedRunSnapshot()"}
-    
+
     SNAPSHOT -->|有消息| USE_MSGS["使用快照消息<br/>+ inFlightPrompt"]
     SNAPSHOT -->|无消息但有快照| BRANCH["分支到 transcriptLeafId<br/>+ inFlightPrompt"]
     SNAPSHOT -->|无快照| LEAF["检查叶节点"]
-    
+
     LEAF --> LEAF_USER{"叶节点是 user 消息?"}
     LEAF_USER -->|是| BRANCH_PARENT["分支到 parentId<br/>(排除未回复的用户消息)"]
     LEAF_USER -->|否| USE_LEAF["使用当前叶节点"]
-    
+
     USE_MSGS --> SANITIZE["stripToolResultDetails()<br/>安全清理"]
     BRANCH --> BUILD_CTX["buildSessionContext()"]
     BRANCH_PARENT --> BUILD_CTX
     USE_LEAF --> BUILD_CTX
     BUILD_CTX --> SANITIZE
-    
+
     SANITIZE --> MODEL["streamSimple()<br/>独立 API 调用"]
     MODEL --> CHUNKER{"有 blockReplyChunking?"}
     CHUNKER -->|是| STREAM["流式分块输出"]
@@ -58,13 +58,13 @@ flowchart TD
 buildBtwQuestionPrompt(question, inFlightPrompt):
   → "Answer this side question only."
   → "Ignore any unfinished task in the conversation while answering it."
-  
+
   // 如有进行中的主任务:
   → "<in_flight_main_task>"
   → inFlightPrompt
   → "</in_flight_main_task>"
   → "Do not continue or complete that task while answering the side question."
-  
+
   → "<btw_side_question>"
   → question
   → "</btw_side_question>"

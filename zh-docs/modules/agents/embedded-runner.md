@@ -26,31 +26,31 @@ sequenceDiagram
     participant Auth as RuntimeAuthState
     participant Plugin as providerRuntimeAuth
     participant Store as AuthStorage
-    
+
     Run->>Auth: prepareProviderRuntimeAuth()
     Auth-->>Run: {apiKey, expiresAt, baseUrl}
     Run->>Store: setRuntimeApiKey()
-    
+
     Note over Run: 定时刷新调度
     Run->>Auth: scheduleRuntimeAuth()<br/>expiresAt - 5min margin
-    
+
     loop 定时刷新
         Auth->>Plugin: refreshRuntimeAuth("scheduled")
         Plugin-->>Auth: 新 apiKey+expiresAt
         Auth->>Store: setRuntimeApiKey()
         Auth->>Auth: reschedule()
     end
-    
+
     Run->>Auth: stopRuntimeAuthRefreshTimer()
 ```
 
 ### 2.2 认证刷新常量
 
-| 常量 | 值 | 说明 |
-|------|-----|------|
-| REFRESH_MARGIN_MS | 5 分钟 | 提前于过期的刷新窗口 |
-| REFRESH_RETRY_MS | 1 分钟 | 刷新失败后重试间隔 |
-| REFRESH_MIN_DELAY_MS | 5 秒 | 最小刷新延迟 |
+| 常量                 | 值     | 说明                 |
+| -------------------- | ------ | -------------------- |
+| REFRESH_MARGIN_MS    | 5 分钟 | 提前于过期的刷新窗口 |
+| REFRESH_RETRY_MS     | 1 分钟 | 刷新失败后重试间隔   |
+| REFRESH_MIN_DELAY_MS | 5 秒   | 最小刷新延迟         |
 
 ---
 
@@ -61,14 +61,14 @@ flowchart TD
     START["初始 profile 选择"] --> LOCKED{"lockedProfileId?<br/>(用户指定)"}
     LOCKED -->|是| USE_LOCKED["仅使用指定 profile"]
     LOCKED -->|否| ORDER["resolveAuthProfileOrder()<br/>按配置排序"]
-    
+
     ORDER --> LOOP["遍历候选"]
     LOOP --> COOLDOWN{"在冷却中?"}
     COOLDOWN -->|是| PROBE{"允许冷却探测?<br/>(transient + 全部冷却)"}
     PROBE -->|是| USE["使用此 profile (探测)"]
     PROBE -->|否| SKIP["跳过 → 下一个"]
     COOLDOWN -->|否| USE
-    
+
     USE --> RUN["API 调用"]
     RUN -->|失败| ADVANCE["advanceAuthProfile()"]
     ADVANCE --> NEXT_LOOP["跳过冷却中的 profile"]
@@ -78,6 +78,7 @@ flowchart TD
 ### 3.1 Profile 轮换重置
 
 轮换 profile 时重置:
+
 - `thinkLevel` → 初始值
 - `attemptedThinking` → 清空
 - **不重置**: `overflowCompactionAttempts`, `toolResultTruncationAttempted`
@@ -89,10 +90,10 @@ flowchart TD
 ### 4.1 重试上限
 
 ```typescript
-BASE_RUN_RETRY_ITERATIONS = 24
-RUN_RETRY_ITERATIONS_PER_PROFILE = 8
-MIN_RUN_RETRY_ITERATIONS = 32
-MAX_RUN_RETRY_ITERATIONS = 160
+BASE_RUN_RETRY_ITERATIONS = 24;
+RUN_RETRY_ITERATIONS_PER_PROFILE = 8;
+MIN_RUN_RETRY_ITERATIONS = 32;
+MAX_RUN_RETRY_ITERATIONS = 160;
 
 // 公式: max(32, min(160, 24 + profileCount × 8))
 // 1 profile → 32, 5 profiles → 64, 17 profiles → 160
@@ -105,10 +106,10 @@ flowchart TD
     ERROR["错误发生"] --> ABORT{"已取消?"}
     ABORT -->|是| RETURN["返回已有 payload"]
     ABORT -->|否| OVERFLOW{"上下文溢出?"}
-    
+
     OVERFLOW -->|是| OVF_BRANCH["上下文溢出恢复<br/>(见 §5)"]
     OVERFLOW -->|否| PROMPT_ERR{"promptError?"}
-    
+
     PROMPT_ERR -->|是| AUTH_REFRESH{"运行时认证刷新?"}
     AUTH_REFRESH -->|成功| RETRY["重试 (authRetryPending)"]
     AUTH_REFRESH -->|否| ROLE_ERR{"角色排序错误?"}
@@ -123,7 +124,7 @@ flowchart TD
     THINK_FB -->|否| HAS_FB{"有 model fallback?"}
     HAS_FB -->|是| FAILOVER_ERR["throw FailoverError"]
     HAS_FB -->|否| SURFACE["throw 原始错误"]
-    
+
     PROMPT_ERR -->|否| ASSISTANT_ERR["检查 assistant 错误"]
     ASSISTANT_ERR --> SHOULD_ROTATE{"shouldRotate?<br/>(failover || timeout)"}
     SHOULD_ROTATE -->|是| SAME_FLOW["同上轮换链"]
@@ -138,7 +139,7 @@ OVERLOAD_FAILOVER_BACKOFF_POLICY = {
   maxMs: 1500,
   factor: 2,
   jitter: 0.2,
-}
+};
 // 250ms → 500ms → 1000ms → 1500ms (上限)
 ```
 
@@ -149,19 +150,19 @@ OVERLOAD_FAILOVER_BACKOFF_POLICY = {
 ```mermaid
 flowchart TD
     OVERFLOW["上下文溢出检测"] --> HAD_AUTO{"这次 attempt<br/>已自动 compact?"}
-    
+
     HAD_AUTO -->|是| RETRY1["直接重试 (SDK 已 compact)<br/>overflowCompactionAttempts++"]
     HAD_AUTO -->|否| EXPLICIT["显式 contextEngine.compact()<br/>target=budget, force=true"]
-    
+
     RETRY1 --> STILL_OVERFLOW{"仍然溢出?"}
     STILL_OVERFLOW -->|是| CHECK_LIMIT{"< 3 次?"}
     CHECK_LIMIT -->|是| EXPLICIT
     CHECK_LIMIT -->|否| TOOL_TRUNC{"工具结果截断?"}
-    
+
     EXPLICIT --> COMPACT_OK{"compact 成功?"}
     COMPACT_OK -->|是| RETRY2["重试"]
     COMPACT_OK -->|否| TOOL_TRUNC
-    
+
     TOOL_TRUNC --> HAS_OVERSIZED{"有超大工具结果?"}
     HAS_OVERSIZED -->|是| TRUNCATE["truncateOversizedToolResults()<br/>仅尝试一次"]
     TRUNCATE --> TRUNC_OK{"截断成功?"}
@@ -226,6 +227,6 @@ Timeout 不标记 profile 冷却:
 ### 7.3 Probe Session 检测
 
 ```typescript
-isProbeSession = sessionId?.startsWith("probe-") ?? false
+isProbeSession = sessionId?.startsWith("probe-") ?? false;
 // 探测 session 的 timeout 不产生 warn 日志
 ```

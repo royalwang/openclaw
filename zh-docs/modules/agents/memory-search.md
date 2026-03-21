@@ -6,15 +6,15 @@
 
 ### 1.1 七种 Provider
 
-| Provider | 默认模型 | 说明 |
-|----------|---------|------|
-| `openai` | text-embedding-3-small | OpenAI Embeddings API |
-| `gemini` | gemini-embedding-001 | Google Gemini |
-| `voyage` | voyage-4-large | Voyage AI |
-| `mistral` | mistral-embed | Mistral AI |
-| `ollama` | nomic-embed-text | 本地 Ollama |
-| `local` | (自定义) | 本地模型文件 |
-| `auto` | (自动选择) | 根据密钥可用性选择 |
+| Provider  | 默认模型               | 说明                  |
+| --------- | ---------------------- | --------------------- |
+| `openai`  | text-embedding-3-small | OpenAI Embeddings API |
+| `gemini`  | gemini-embedding-001   | Google Gemini         |
+| `voyage`  | voyage-4-large         | Voyage AI             |
+| `mistral` | mistral-embed          | Mistral AI            |
+| `ollama`  | nomic-embed-text       | 本地 Ollama           |
+| `local`   | (自定义)               | 本地模型文件          |
+| `auto`    | (自动选择)             | 根据密钥可用性选择    |
 
 ### 1.2 Provider 降级
 
@@ -30,12 +30,12 @@ fallback 配置: "openai" | "gemini" | "local" | "voyage" | "mistral" | "ollama"
 
 ### 2.1 参数矩阵
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `hybrid.enabled` | true | 启用混合搜索 |
-| `hybrid.vectorWeight` | 0.7 | 向量搜索权重 |
-| `hybrid.textWeight` | 0.3 | 文本搜索权重 |
-| `hybrid.candidateMultiplier` | 4 | 候选扩大因子 (1-20) |
+| 参数                         | 默认值 | 说明                |
+| ---------------------------- | ------ | ------------------- |
+| `hybrid.enabled`             | true   | 启用混合搜索        |
+| `hybrid.vectorWeight`        | 0.7    | 向量搜索权重        |
+| `hybrid.textWeight`          | 0.3    | 文本搜索权重        |
+| `hybrid.candidateMultiplier` | 4      | 候选扩大因子 (1-20) |
 
 ### 2.2 权重标准化
 
@@ -48,17 +48,17 @@ normalizedTextWeight = sum > 0 ? textWeight / sum : 0.3;
 
 ### 2.3 MMR（最大边际相关性）
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `mmr.enabled` | false | 启用 MMR 重排序 |
-| `mmr.lambda` | 0.7 | 相关性 vs 多样性平衡 (0=纯多样性, 1=纯相关性) |
+| 参数          | 默认值 | 说明                                          |
+| ------------- | ------ | --------------------------------------------- |
+| `mmr.enabled` | false  | 启用 MMR 重排序                               |
+| `mmr.lambda`  | 0.7    | 相关性 vs 多样性平衡 (0=纯多样性, 1=纯相关性) |
 
 ### 2.4 时间衰减
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `temporalDecay.enabled` | false | 启用时间衰减 |
-| `temporalDecay.halfLifeDays` | 30 | 衰减半衰期 (天) |
+| 参数                         | 默认值 | 说明            |
+| ---------------------------- | ------ | --------------- |
+| `temporalDecay.enabled`      | false  | 启用时间衰减    |
+| `temporalDecay.halfLifeDays` | 30     | 衰减半衰期 (天) |
 
 ---
 
@@ -82,10 +82,10 @@ store = {
 
 ### 3.2 Chunking 配置
 
-| 参数 | 默认值 | 约束 |
-|------|--------|------|
-| `chunking.tokens` | 400 | 最小 1 |
-| `chunking.overlap` | 80 | clamp(0, tokens-1) |
+| 参数               | 默认值 | 约束               |
+| ------------------ | ------ | ------------------ |
+| `chunking.tokens`  | 400    | 最小 1             |
+| `chunking.overlap` | 80     | clamp(0, tokens-1) |
 
 ---
 
@@ -93,37 +93,37 @@ store = {
 
 ### 4.1 触发条件
 
-| 触发器 | 默认 | 说明 |
-|--------|------|------|
-| `sync.onSessionStart` | true | 会话开始时同步 |
-| `sync.onSearch` | true | 搜索前同步 |
-| `sync.watch` | true | 文件监控 (fswatch) |
-| `sync.watchDebounceMs` | 1500 | 监控去抖 |
-| `sync.intervalMinutes` | 0 | 定期同步间隔 (0=禁用) |
+| 触发器                 | 默认 | 说明                  |
+| ---------------------- | ---- | --------------------- |
+| `sync.onSessionStart`  | true | 会话开始时同步        |
+| `sync.onSearch`        | true | 搜索前同步            |
+| `sync.watch`           | true | 文件监控 (fswatch)    |
+| `sync.watchDebounceMs` | 1500 | 监控去抖              |
+| `sync.intervalMinutes` | 0    | 定期同步间隔 (0=禁用) |
 
 ### 4.2 Session 同步阈值
 
-| 阈值 | 默认值 | 说明 |
-|------|--------|------|
-| `sessions.deltaBytes` | 100,000 | 字节变化阈值 |
-| `sessions.deltaMessages` | 50 | 消息数变化阈值 |
-| `sessions.postCompactionForce` | true | 压缩后强制同步 |
+| 阈值                           | 默认值  | 说明           |
+| ------------------------------ | ------- | -------------- |
+| `sessions.deltaBytes`          | 100,000 | 字节变化阈值   |
+| `sessions.deltaMessages`       | 50      | 消息数变化阈值 |
+| `sessions.postCompactionForce` | true    | 压缩后强制同步 |
 
 ---
 
 ## 5. 查询参数
 
-| 参数 | 默认值 | 约束 |
-|------|--------|------|
-| `query.maxResults` | 6 | 最大返回数 |
-| `query.minScore` | 0.35 | 最低相关性分数 (0-1) |
+| 参数               | 默认值 | 约束                 |
+| ------------------ | ------ | -------------------- |
+| `query.maxResults` | 6      | 最大返回数           |
+| `query.minScore`   | 0.35   | 最低相关性分数 (0-1) |
 
 ---
 
 ## 6. 数据源
 
 ```typescript
-sources: ["memory"] | ["sessions"] | ["memory", "sessions"]
+sources: ["memory"] | ["sessions"] | ["memory", "sessions"];
 
 // "memory"   → 工作区 memory/ 目录和 MEMORY.md 文件
 // "sessions" → 会话历史 (需 experimental.sessionMemory=true)
@@ -153,11 +153,11 @@ multimodal = normalizeMemoryMultimodalSettings({
 
 ```typescript
 remote.batch = {
-  enabled: false,           // 启用批处理
-  wait: true,               // 等待批处理完成
-  concurrency: 2,           // 并发数
-  pollIntervalMs: 2000,     // 轮询间隔
-  timeoutMinutes: 60,       // 超时时间
+  enabled: false, // 启用批处理
+  wait: true, // 等待批处理完成
+  concurrency: 2, // 并发数
+  pollIntervalMs: 2000, // 轮询间隔
+  timeoutMinutes: 60, // 超时时间
 };
 ```
 
